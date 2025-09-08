@@ -1,0 +1,20 @@
+diff --git a/llvm/lib/Target/AArch64/AArch64SVEInstrInfo.td b/llvm/lib/Target/AArch64/AArch64SVEInstrInfo.td
+index a3c41f2e052c..748ebb4a9b51 100644
+--- a/llvm/lib/Target/AArch64/AArch64SVEInstrInfo.td
++++ b/llvm/lib/Target/AArch64/AArch64SVEInstrInfo.td
+@@ -2984,6 +2984,7 @@ let Predicates = [HasSVEorSME] in {
+   }
+ 
+   defm Pat_Store_P16 : unpred_store_predicate<nxv16i1, STR_PXI>;
++  defm Pat_Store_P4  : unpred_store_predicate<nxv4i1, STR_PXI>;
+ 
+   multiclass unpred_load_predicate<ValueType Ty, Instruction Load> {
+     def _fi : Pat<(Ty (load (am_sve_fi GPR64sp:$base, simm9:$offset))),
+@@ -2994,6 +2995,7 @@ let Predicates = [HasSVEorSME] in {
+   }
+ 
+   defm Pat_Load_P16 : unpred_load_predicate<nxv16i1, LDR_PXI>;
++  defm Pat_Load_P4  : unpred_load_predicate<nxv4i1, LDR_PXI>;
+ 
+   multiclass ld1<Instruction RegRegInst, Instruction RegImmInst, ValueType Ty,
+                  SDPatternOperator Load, ValueType PredTy, ValueType MemVT, ComplexPattern AddrCP> {

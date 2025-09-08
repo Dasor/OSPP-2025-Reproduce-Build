@@ -1,0 +1,28 @@
+diff --git a/mlir/lib/Dialect/Transform/IR/CMakeLists.txt b/mlir/lib/Dialect/Transform/IR/CMakeLists.txt
+index 5b4989f328e6..3f598a690969 100644
+--- a/mlir/lib/Dialect/Transform/IR/CMakeLists.txt
++++ b/mlir/lib/Dialect/Transform/IR/CMakeLists.txt
+@@ -17,6 +17,23 @@ add_mlir_dialect_library(MLIRTransformDialect
+   MLIRRewrite
+   MLIRSideEffectInterfaces
+   MLIRTransforms
++  # Quite Odd that we need this here
++  MLIRArmSMETestPasses
++  MLIRArithTransforms
++  MLIRAsyncToLLVM
++  MLIRLinalgTransforms
++  MLIRMemRefTransforms
++  MLIRAffineTransforms
++  MLIRArithToLLVM
++  MLIROpenMPToLLVM
++  MLIRIndexToLLVM
++  MLIRComplexToLLVM
++  MLIRMathToLLVM
++  MLIRAffineToStandard
++  MLIRReconcileUnrealizedCasts
++  MLIRAsyncTransforms
++  MLIRVectorToLLVM
++  MLIRVectorToLLVMPass
+   MLIRTransformDialectInterfaces
+   MLIRTransformDialectUtils
+   )

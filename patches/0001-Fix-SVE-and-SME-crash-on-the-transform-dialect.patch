@@ -1,0 +1,395 @@
+From 42fe20e79bfffc69eea5251a3d9032bf2c34f85e Mon Sep 17 00:00:00 2001
+From: Daniel <danielantonio.martinezs@um.es>
+Date: Fri, 25 Jul 2025 15:33:29 +0200
+Subject: [PATCH] Fix SVE and SME crash on the transform dialect
+
+---
+ .../mlir/Dialect/ArmSME/CMakeLists.txt        |  1 +
+ .../TransformOps/ArmSMEVectorTransformOps.h   | 31 +++++++++++++
+ .../TransformOps/ArmSMEVectorTransformOps.td  | 15 ++++++
+ .../ArmSME/TransformOps/CMakeLists.txt        |  6 +++
+ .../mlir/Dialect/ArmSVE/CMakeLists.txt        |  1 +
+ .../TransformOps/ArmSVEVectorTransformOps.h   | 31 +++++++++++++
+ .../TransformOps/ArmSVEVectorTransformOps.td  | 15 ++++++
+ .../ArmSVE/TransformOps/CMakeLists.txt        |  6 +++
+ mlir/include/mlir/InitAllExtensions.h         |  4 ++
+ mlir/lib/Dialect/ArmSME/CMakeLists.txt        |  1 +
+ .../TransformOps/ArmSMEVectorTransformOps.cpp | 46 +++++++++++++++++++
+ .../ArmSME/TransformOps/CMakeLists.txt        | 18 ++++++++
+ mlir/lib/Dialect/ArmSVE/CMakeLists.txt        |  1 +
+ .../TransformOps/ArmSVEVectorTransformOps.cpp | 46 +++++++++++++++++++
+ .../ArmSVE/TransformOps/CMakeLists.txt        | 18 ++++++++
+ mlir/lib/Tools/mlir-opt/CMakeLists.txt        |  1 +
+ 16 files changed, 241 insertions(+)
+ create mode 100644 mlir/include/mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.h
+ create mode 100644 mlir/include/mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.td
+ create mode 100644 mlir/include/mlir/Dialect/ArmSME/TransformOps/CMakeLists.txt
+ create mode 100644 mlir/include/mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.h
+ create mode 100644 mlir/include/mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.td
+ create mode 100644 mlir/include/mlir/Dialect/ArmSVE/TransformOps/CMakeLists.txt
+ create mode 100644 mlir/lib/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.cpp
+ create mode 100644 mlir/lib/Dialect/ArmSME/TransformOps/CMakeLists.txt
+ create mode 100644 mlir/lib/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.cpp
+ create mode 100644 mlir/lib/Dialect/ArmSVE/TransformOps/CMakeLists.txt
+
+diff --git a/mlir/include/mlir/Dialect/ArmSME/CMakeLists.txt b/mlir/include/mlir/Dialect/ArmSME/CMakeLists.txt
+index 9f57627c321f..cb1e9d01821a 100644
+--- a/mlir/include/mlir/Dialect/ArmSME/CMakeLists.txt
++++ b/mlir/include/mlir/Dialect/ArmSME/CMakeLists.txt
+@@ -1,2 +1,3 @@
+ add_subdirectory(IR)
+ add_subdirectory(Transforms)
++add_subdirectory(TransformOps)
+diff --git a/mlir/include/mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.h b/mlir/include/mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.h
+new file mode 100644
+index 000000000000..61212afbbd9e
+--- /dev/null
++++ b/mlir/include/mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.h
+@@ -0,0 +1,31 @@
++//===- ArmSMEVectorTransformOps.h - Vector transform ops --------*- C++ -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef MLIR_DIALECT_ARM_SME_VECTOR_TRANSFORMOPS_H
++#define MLIR_DIALECT_ARM_SME_VECTOR_TRANSFORMOPS_H
++
++#include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
++#include "mlir/IR/OpImplementation.h"
++
++//===----------------------------------------------------------------------===//
++// ArmSME Vector Transform Operations
++//===----------------------------------------------------------------------===//
++
++#define GET_OP_CLASSES
++#include "mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.h.inc"
++
++namespace mlir {
++class DialectRegistry;
++
++namespace arm_sme {
++void registerTransformDialectExtension(DialectRegistry &registry);
++
++} // namespace arm_sve
++} // namespace mlir
++
++#endif // MLIR_DIALECT_ARM_SME_VECTOR_TRANSFORMOPS_H
+diff --git a/mlir/include/mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.td b/mlir/include/mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.td
+new file mode 100644
+index 000000000000..12d0fa995ab5
+--- /dev/null
++++ b/mlir/include/mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.td
+@@ -0,0 +1,15 @@
++//===- ArmSMEVectorTransformOps.td - Arm SME transform ops--*- tablegen -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++#ifndef ARMSME_VECTOR_TRANSFORM_OPS
++#define ARMSME_VECTOR_TRANSFORM_OPS
++
++include "mlir/Dialect/Transform/IR/TransformAttrs.td"
++include "mlir/Dialect/Transform/IR/TransformDialect.td"
++include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.td"
++
++#endif // ARMSME_VECTOR_TRANSFORM_OPS
+diff --git a/mlir/include/mlir/Dialect/ArmSME/TransformOps/CMakeLists.txt b/mlir/include/mlir/Dialect/ArmSME/TransformOps/CMakeLists.txt
+new file mode 100644
+index 000000000000..9e7990b68230
+--- /dev/null
++++ b/mlir/include/mlir/Dialect/ArmSME/TransformOps/CMakeLists.txt
+@@ -0,0 +1,6 @@
++set(LLVM_TARGET_DEFINITIONS ArmSMEVectorTransformOps.td)
++mlir_tablegen(ArmSMEVectorTransformOps.h.inc -gen-op-decls)
++mlir_tablegen(ArmSMEVectorTransformOps.cpp.inc -gen-op-defs)
++add_public_tablegen_target(MLIRArmSMEVectorTransformOpsIncGen)
++
++add_mlir_doc(ArmSMEVectorTransformOps ArmSMEVectorTransformOps Dialects/ -gen-op-doc)
+diff --git a/mlir/include/mlir/Dialect/ArmSVE/CMakeLists.txt b/mlir/include/mlir/Dialect/ArmSVE/CMakeLists.txt
+index 9f57627c321f..cb1e9d01821a 100644
+--- a/mlir/include/mlir/Dialect/ArmSVE/CMakeLists.txt
++++ b/mlir/include/mlir/Dialect/ArmSVE/CMakeLists.txt
+@@ -1,2 +1,3 @@
+ add_subdirectory(IR)
+ add_subdirectory(Transforms)
++add_subdirectory(TransformOps)
+diff --git a/mlir/include/mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.h b/mlir/include/mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.h
+new file mode 100644
+index 000000000000..7f22cd1fe643
+--- /dev/null
++++ b/mlir/include/mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.h
+@@ -0,0 +1,31 @@
++//===- ArmSVEVectorTransformOps.h - Vector transform ops --------*- C++ -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef MLIR_DIALECT_ARM_SVE_VECTOR_TRANSFORMOPS_H
++#define MLIR_DIALECT_ARM_SVE_VECTOR_TRANSFORMOPS_H
++
++#include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
++#include "mlir/IR/OpImplementation.h"
++
++//===----------------------------------------------------------------------===//
++// ArmSVE Vector Transform Operations
++//===----------------------------------------------------------------------===//
++
++#define GET_OP_CLASSES
++#include "mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.h.inc"
++
++namespace mlir {
++class DialectRegistry;
++
++namespace arm_sve {
++void registerTransformDialectExtension(DialectRegistry &registry);
++
++} // namespace arm_sve
++} // namespace mlir
++
++#endif // MLIR_DIALECT_ARM_SVE_VECTOR_TRANSFORMOPS_H
+diff --git a/mlir/include/mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.td b/mlir/include/mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.td
+new file mode 100644
+index 000000000000..00c69cfd6562
+--- /dev/null
++++ b/mlir/include/mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.td
+@@ -0,0 +1,15 @@
++//===- ArmSVEVectorTransformOps.td - Arm SVE transform ops--*- tablegen -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++#ifndef ARMSVE_VECTOR_TRANSFORM_OPS
++#define ARMSVE_VECTOR_TRANSFORM_OPS
++
++include "mlir/Dialect/Transform/IR/TransformAttrs.td"
++include "mlir/Dialect/Transform/IR/TransformDialect.td"
++include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.td"
++
++#endif // ARMSVE_VECTOR_TRANSFORM_OPS
+diff --git a/mlir/include/mlir/Dialect/ArmSVE/TransformOps/CMakeLists.txt b/mlir/include/mlir/Dialect/ArmSVE/TransformOps/CMakeLists.txt
+new file mode 100644
+index 000000000000..ce8d8fea7f18
+--- /dev/null
++++ b/mlir/include/mlir/Dialect/ArmSVE/TransformOps/CMakeLists.txt
+@@ -0,0 +1,6 @@
++set(LLVM_TARGET_DEFINITIONS ArmSVEVectorTransformOps.td)
++mlir_tablegen(ArmSVEVectorTransformOps.h.inc -gen-op-decls)
++mlir_tablegen(ArmSVEVectorTransformOps.cpp.inc -gen-op-defs)
++add_public_tablegen_target(MLIRArmSVEVectorTransformOpsIncGen)
++
++add_mlir_doc(ArmSVEVectorTransformOps ArmSVEVectorTransformOps Dialects/ -gen-op-doc)
+diff --git a/mlir/include/mlir/InitAllExtensions.h b/mlir/include/mlir/InitAllExtensions.h
+index 20a4ab6f18a2..d68540c10c11 100644
+--- a/mlir/include/mlir/InitAllExtensions.h
++++ b/mlir/include/mlir/InitAllExtensions.h
+@@ -35,6 +35,8 @@
+ #include "mlir/Dialect/SparseTensor/TransformOps/SparseTensorTransformOps.h"
+ #include "mlir/Dialect/Tensor/TransformOps/TensorTransformOps.h"
+ #include "mlir/Dialect/Transform/DebugExtension/DebugExtension.h"
++#include "mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.h"
++#include "mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.h"
+ #include "mlir/Dialect/Transform/IRDLExtension/IRDLExtension.h"
+ #include "mlir/Dialect/Transform/LoopExtension/LoopExtension.h"
+ #include "mlir/Dialect/Transform/PDLExtension/PDLExtension.h"
+@@ -82,6 +84,8 @@ inline void registerAllExtensions(DialectRegistry &registry) {
+   transform::registerLoopExtension(registry);
+   transform::registerPDLExtension(registry);
+   vector::registerTransformDialectExtension(registry);
++  arm_sve::registerTransformDialectExtension(registry);
++  arm_sme::registerTransformDialectExtension(registry);
+ 
+   // Translation extensions need to be registered by calling
+   // `registerAllToLLVMIRTranslations` (see All.h).
+diff --git a/mlir/lib/Dialect/ArmSME/CMakeLists.txt b/mlir/lib/Dialect/ArmSME/CMakeLists.txt
+index 9f57627c321f..cb1e9d01821a 100644
+--- a/mlir/lib/Dialect/ArmSME/CMakeLists.txt
++++ b/mlir/lib/Dialect/ArmSME/CMakeLists.txt
+@@ -1,2 +1,3 @@
+ add_subdirectory(IR)
+ add_subdirectory(Transforms)
++add_subdirectory(TransformOps)
+diff --git a/mlir/lib/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.cpp b/mlir/lib/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.cpp
+new file mode 100644
+index 000000000000..cc27c84307e7
+--- /dev/null
++++ b/mlir/lib/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.cpp
+@@ -0,0 +1,46 @@
++//===- ArmSMEVectorTransformOps.cpp - Implementation transform ops -------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#include "mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.h"
++
++#include "mlir/Dialect/ArmSME/Transforms/Transforms.h"
++#include "mlir/Dialect/Transform/IR/TransformDialect.h"
++#include "mlir/Dialect/ArmSME/IR/ArmSME.h"
++
++using namespace mlir;
++
++#define GET_OP_CLASSES
++#include "mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.cpp.inc"
++
++
++//===----------------------------------------------------------------------===//
++// Transform op registration
++//===----------------------------------------------------------------------===//
++
++namespace {
++class ArmSMEVectorTransformDialectExtension
++    : public transform::TransformDialectExtension<
++          ArmSMEVectorTransformDialectExtension> {
++public:
++  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
++      ArmSMEVectorTransformDialectExtension)
++
++  ArmSMEVectorTransformDialectExtension() {
++    declareGeneratedDialect<arm_sme::ArmSMEDialect>();
++    registerTransformOps<
++#define GET_OP_LIST
++#include "mlir/Dialect/ArmSME/TransformOps/ArmSMEVectorTransformOps.cpp.inc"
++        >();
++  }
++};
++} // namespace
++
++void mlir::arm_sme::registerTransformDialectExtension(
++    DialectRegistry &registry) {
++  registry.addExtensions<ArmSMEVectorTransformDialectExtension>();
++}
+diff --git a/mlir/lib/Dialect/ArmSME/TransformOps/CMakeLists.txt b/mlir/lib/Dialect/ArmSME/TransformOps/CMakeLists.txt
+new file mode 100644
+index 000000000000..a47013c6d2c6
+--- /dev/null
++++ b/mlir/lib/Dialect/ArmSME/TransformOps/CMakeLists.txt
+@@ -0,0 +1,18 @@
++add_mlir_dialect_library(MLIRArmSMEVectorTransformOps
++  ArmSMEVectorTransformOps.cpp
++
++  ADDITIONAL_HEADER_DIRS
++  ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/ArmSME/TransformOps
++
++  DEPENDS
++  MLIRArmSMEVectorTransformOpsIncGen
++
++  LINK_LIBS PUBLIC
++  MLIRIR
++  MLIRLLVMCommonConversion
++  MLIRLLVMDialect
++  MLIRVectorDialect
++  MLIRTransformDialect
++  MLIRArmSMEDialect
++  MLIRArmSMETransforms
++  )
+diff --git a/mlir/lib/Dialect/ArmSVE/CMakeLists.txt b/mlir/lib/Dialect/ArmSVE/CMakeLists.txt
+index 9f57627c321f..cb1e9d01821a 100644
+--- a/mlir/lib/Dialect/ArmSVE/CMakeLists.txt
++++ b/mlir/lib/Dialect/ArmSVE/CMakeLists.txt
+@@ -1,2 +1,3 @@
+ add_subdirectory(IR)
+ add_subdirectory(Transforms)
++add_subdirectory(TransformOps)
+diff --git a/mlir/lib/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.cpp b/mlir/lib/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.cpp
+new file mode 100644
+index 000000000000..9a1973683531
+--- /dev/null
++++ b/mlir/lib/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.cpp
+@@ -0,0 +1,46 @@
++//===- ArmSVEVectorTransformOps.cpp - Implementation transform ops -------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#include "mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.h"
++
++#include "mlir/Dialect/ArmSVE/IR/ArmSVEDialect.h"
++#include "mlir/Dialect/ArmSVE/Transforms/Transforms.h"
++#include "mlir/Dialect/Transform/IR/TransformDialect.h"
++
++using namespace mlir;
++
++#define GET_OP_CLASSES
++#include "mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.cpp.inc"
++
++
++//===----------------------------------------------------------------------===//
++// Transform op registration
++//===----------------------------------------------------------------------===//
++
++namespace {
++class ArmSVEVectorTransformDialectExtension
++    : public transform::TransformDialectExtension<
++          ArmSVEVectorTransformDialectExtension> {
++public:
++  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
++      ArmSVEVectorTransformDialectExtension)
++
++  ArmSVEVectorTransformDialectExtension() {
++    declareGeneratedDialect<arm_sve::ArmSVEDialect>();
++    registerTransformOps<
++#define GET_OP_LIST
++#include "mlir/Dialect/ArmSVE/TransformOps/ArmSVEVectorTransformOps.cpp.inc"
++        >();
++  }
++};
++} // namespace
++
++void mlir::arm_sve::registerTransformDialectExtension(
++    DialectRegistry &registry) {
++  registry.addExtensions<ArmSVEVectorTransformDialectExtension>();
++}
+diff --git a/mlir/lib/Dialect/ArmSVE/TransformOps/CMakeLists.txt b/mlir/lib/Dialect/ArmSVE/TransformOps/CMakeLists.txt
+new file mode 100644
+index 000000000000..235fe8f5ca0c
+--- /dev/null
++++ b/mlir/lib/Dialect/ArmSVE/TransformOps/CMakeLists.txt
+@@ -0,0 +1,18 @@
++add_mlir_dialect_library(MLIRArmSVEVectorTransformOps
++  ArmSVEVectorTransformOps.cpp
++
++  ADDITIONAL_HEADER_DIRS
++  ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/ArmSVE/TransformOps
++
++  DEPENDS
++  MLIRArmSVEVectorTransformOpsIncGen
++
++  LINK_LIBS PUBLIC
++  MLIRIR
++  MLIRLLVMCommonConversion
++  MLIRLLVMDialect
++  MLIRVectorDialect
++  MLIRTransformDialect
++  MLIRArmSVEDialect
++  MLIRArmSVETransforms
++  )
+diff --git a/mlir/lib/Tools/mlir-opt/CMakeLists.txt b/mlir/lib/Tools/mlir-opt/CMakeLists.txt
+index f24d4c60174e..dbc5ef973c56 100644
+--- a/mlir/lib/Tools/mlir-opt/CMakeLists.txt
++++ b/mlir/lib/Tools/mlir-opt/CMakeLists.txt
+@@ -5,6 +5,7 @@ add_mlir_library(MLIROptLib
+   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Tools/mlir-opt
+ 
+   LINK_LIBS PUBLIC
++  MLIRArmSVEDialect
+   MLIRBytecodeWriter
+   MLIRDebug
+   MLIRObservers
+-- 
+2.43.7
+
