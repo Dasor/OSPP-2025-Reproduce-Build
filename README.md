@@ -36,7 +36,7 @@ There are many patches that need to be applied they are in the patches dir and s
 | 0005  | [link](https://gitee.com/openeuler/llvm-project/pulls/234/files) | -                                                                                                         |   |   |
 | 0006  | [link](https://gitee.com/openeuler/llvm-project/pulls/266)       | Several, see Gitee PR                                                                                     |   |   |
 | 0007  | -                                                                | -                                                                                                         |   |   |
-
+| 0008  | [link](https://gitee.com/openeuler/llvm-project/pulls/269)       | Several, see Gitee PR                                                                                     |   |   |
 
 to aplly all patches in order just:
 
