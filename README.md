@@ -91,3 +91,39 @@ export TRITON_SHARED_OPT_PATH=$YOUR_WORKDIR/triton_cpu/python/build/cmake.linux-
 
 The first just activates the triton-shared backend, and the next two point to important files that triton-shared needs to use, depending on the archquitecture of the server and the python version the last path will be different.
 
+## 4. Tips for debugging and testing
+
+When debugging it's a really good idea to set the envrioment variable `TRITON_SHARED_DUMP_PATH` so you get the IR from all the intermediate steps, for example:
+
+```shell
+export TRITON_SHARED_DUMP_PATH=$YOUR_WORKDIR/dumps
+``` 
+
+Will generate in your chosen directory (from lower to higher abstraction level):
+
+```shell
+ll.ir # LLVM IR 
+ll.mlir # LLVM IR in the MLIR dialect just before mlir-translate
+ttshared.mlir # MLIR IR (this is usually the most important)
+tt.mlir # Triton IR
+```
+
+Most debugging happends around `ttshared.mlir` as it is the crucial step between triton and standard MLIR. Another **VERY IMPORTANT** thing to take into account is to **ALWAYS DELETE THE TRITON CACHE** before running as triton may pick the code stored in cache and not apply any of your new changes. The best way to do it's to just append the remove command before your python execution like this:
+
+```shell
+rm -rf ~/.triton/cache/ && python program.py
+```
+
+This is also essential when running test, to run test triton uses pytest
+
+```shell
+pip install pytest-xdist
+```
+
+Then:
+
+```shell
+rm -rf ~/.triton/cache && python3 -m pytest -n32 --device=cpu python/test/unit/language/test_core.py -m cpu
+```
+
+to run all the core tests, again making sure to **remove the triton cache**.
