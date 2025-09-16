@@ -127,3 +127,19 @@ rm -rf ~/.triton/cache && python3 -m pytest -n32 --device=cpu python/test/unit/l
 ```
 
 to run all the core tests, again making sure to **remove the triton cache**.
+
+## 5. Failing test.
+
+There are 96 failing test in `test_core.py` there is a file named `failed.txt` in this repo that contains the name of all the failing test. To run a specific test for example let's say `test_reduce[1-argmax-float32-shape149-0-True]` we can just do:
+
+```shell
+rm -rf ~/.triton/cache && python3 -m pytest -n32 --device=cpu python/test/unit/language/test_core.py:: test_reduce[1-argmax-float32-shape149-0-True]-m cpu
+```
+
+the text between the square brackets are the parameters passed to the test. There may be instances where not all of the tests fail and some just fails with certain parameters, this is also the case of `test_reduce` as if we run all of the possible `test_reduce` with all possible parameters (same thing as before but without square braces):
+
+```shell
+rm -rf ~/.triton/cache && python3 -m pytest -n32 --device=cpu python/test/unit/language/test_core.py::test_reduce -m cpu
+```
+
+We see that just the tests with the `float32` parameters fail pointing us to a better path to fix the solution. 
