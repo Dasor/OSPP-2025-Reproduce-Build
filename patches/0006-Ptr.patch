@@ -1,7 +1,7 @@
 From fef9eb7f3e3fb030645a7134e53f0a3c63126fef Mon Sep 17 00:00:00 2001
 From: Daniel <danielantonio.martinezs@um.es>
 Date: Tue, 2 Sep 2025 16:16:51 +0200
-Subject: [PATCH 1/6] Ptr To LLVM
+Subject: [PATCH 1/7] Ptr To LLVM
 
 ---
  .../mlir/Conversion/PtrToLLVM/PtrToLLVM.h     | 27 +++++++
@@ -202,7 +202,7 @@ Gitee
 From 61c6ebff9a2626d1052df820b0280ff0374d7038 Mon Sep 17 00:00:00 2001
 From: Daniel <danielantonio.martinezs@um.es>
 Date: Tue, 2 Sep 2025 16:17:35 +0200
-Subject: [PATCH 2/6] [Backport][mlir][DataLayout] Add a default memory space
+Subject: [PATCH 2/7] [Backport][mlir][DataLayout] Add a default memory space
  entry to the data layout
 
 ---
@@ -844,7 +844,7 @@ Gitee
 From 04a5be38d3579b23254ed4e682081aab62f24526 Mon Sep 17 00:00:00 2001
 From: Daniel <danielantonio.martinezs@um.es>
 Date: Tue, 2 Sep 2025 16:18:04 +0200
-Subject: [PATCH 3/6] [Backport][mlir][Ptr] Add the MemorySpaceAttrInterface
+Subject: [PATCH 3/7] [Backport][mlir][Ptr] Add the MemorySpaceAttrInterface
  interface and dependencies.
 
 ---
@@ -1229,7 +1229,7 @@ Gitee
 From 3a999884a163fa1a7f384cd43673830bfa58fbdf Mon Sep 17 00:00:00 2001
 From: Daniel <danielantonio.martinezs@um.es>
 Date: Tue, 2 Sep 2025 16:20:11 +0200
-Subject: [PATCH 4/6] [Backport][mlir][ptr] Add the ptradd and type_offset ops,
+Subject: [PATCH 4/7] [Backport][mlir][ptr] Add the ptradd and type_offset ops,
  and generic_space attr
 
 ---
@@ -1596,7 +1596,7 @@ Gitee
 From bc55ba1f14686342742bff8b105fb0bb671d7c7b Mon Sep 17 00:00:00 2001
 From: Daniel <danielantonio.martinezs@um.es>
 Date: Tue, 2 Sep 2025 16:20:41 +0200
-Subject: [PATCH 5/6] [Backport] [mlir] Add property combinators, initial ODS
+Subject: [PATCH 5/7] [Backport] [mlir] Add property combinators, initial ODS
  support
 
 ---
@@ -3808,7 +3808,7 @@ Gitee
 From b326a0893c3084821ad694b58dac40bd620487ac Mon Sep 17 00:00:00 2001
 From: Daniel <danielantonio.martinezs@um.es>
 Date: Tue, 2 Sep 2025 16:21:17 +0200
-Subject: [PATCH 6/6] [Backport] Add PtrLikeTypeInterface, removed unnecessary
+Subject: [PATCH 6/7] [Backport] Add PtrLikeTypeInterface, removed unnecessary
  ops
 
 ---
@@ -4243,6 +4243,452 @@ index faa944937e00..39627cba244d 100644
  MemRefType BaseMemRefType::clone(::llvm::ArrayRef<int64_t> shape,
                                   Type elementType) const {
    return ::llvm::cast<MemRefType>(cloneWith(shape, elementType));
+-- 
+Gitee
+
+
+From 92f7f55cc7e01d7ec939a2fb5bbbb5ded925281e Mon Sep 17 00:00:00 2001
+From: Daniel <danielantonio.martinezs@um.es>
+Date: Tue, 16 Sep 2025 10:30:22 +0200
+Subject: [PATCH 7/7] fixed test failures
+
+---
+ mlir/test/Dialect/Ptr/layout.mlir             | 101 ++++++++++++------
+ mlir/test/Dialect/Ptr/types.mlir              |  21 ++--
+ mlir/test/IR/properties.mlir                  |  52 +++++++--
+ mlir/test/Transforms/test-legalizer.mlir      |   4 +-
+ mlir/test/lib/Dialect/Test/CMakeLists.txt     |   1 +
+ mlir/test/lib/Dialect/Test/TestAttrDefs.td    |  11 ++
+ mlir/test/lib/Dialect/Test/TestAttributes.cpp |  43 ++++++++
+ mlir/test/lib/Dialect/Test/TestAttributes.h   |   1 +
+ mlir/test/mlir-tblgen/op-format.td            |   4 +-
+ 9 files changed, 183 insertions(+), 55 deletions(-)
+
+diff --git a/mlir/test/Dialect/Ptr/layout.mlir b/mlir/test/Dialect/Ptr/layout.mlir
+index 73189a388942..f904e729fcbe 100644
+--- a/mlir/test/Dialect/Ptr/layout.mlir
++++ b/mlir/test/Dialect/Ptr/layout.mlir
+@@ -1,56 +1,91 @@
+ // RUN: mlir-opt --test-data-layout-query --split-input-file --verify-diagnostics %s | FileCheck %s
+ 
+ module attributes { dlti.dl_spec = #dlti.dl_spec<
+-  #dlti.dl_entry<!ptr.ptr, #ptr.spec<size = 32, abi = 32, preferred = 64>>,
+-  #dlti.dl_entry<!ptr.ptr<5>,#ptr.spec<size = 64, abi = 64, preferred = 64>>,
+-  #dlti.dl_entry<!ptr.ptr<4>, #ptr.spec<size = 32, abi = 64, preferred = 64, index = 24>>,
+-  #dlti.dl_entry<"dlti.alloca_memory_space", 5 : ui64>,
+-  #dlti.dl_entry<"dlti.global_memory_space", 2 : ui64>,
+-  #dlti.dl_entry<"dlti.program_memory_space", 3 : ui64>,
++  #dlti.dl_entry<!ptr.ptr<#test.const_memory_space>, #ptr.spec<size = 32, abi = 32, preferred = 64>>,
++  #dlti.dl_entry<!ptr.ptr<#test.const_memory_space<5>>,#ptr.spec<size = 64, abi = 64, preferred = 64>>,
++  #dlti.dl_entry<!ptr.ptr<#test.const_memory_space<4>>, #ptr.spec<size = 32, abi = 64, preferred = 64, index = 24>>,
++  #dlti.dl_entry<"dlti.default_memory_space", #test.const_memory_space<7>>,
++  #dlti.dl_entry<"dlti.alloca_memory_space", #test.const_memory_space<5>>,
++  #dlti.dl_entry<"dlti.global_memory_space", #test.const_memory_space<2>>,
++  #dlti.dl_entry<"dlti.program_memory_space", #test.const_memory_space<3>>,
+   #dlti.dl_entry<"dlti.stack_alignment", 128 : i64>
+ >} {
+-  // CHECK: @spec
++  // CHECK-LABEL: @spec
+   func.func @spec() {
+     // CHECK: alignment = 4
+-    // CHECK: alloca_memory_space = 5
++    // CHECK: alloca_memory_space = #test.const_memory_space<5>
+     // CHECK: bitsize = 32
+-    // CHECK: global_memory_space = 2
++    // CHECK: default_memory_space = #test.const_memory_space<7>
++    // CHECK: global_memory_space = #test.const_memory_space<2>
+     // CHECK: index = 32
+     // CHECK: preferred = 8
+-    // CHECK: program_memory_space = 3
++    // CHECK: program_memory_space = #test.const_memory_space<3>
+     // CHECK: size = 4
+     // CHECK: stack_alignment = 128
+-    "test.data_layout_query"() : () -> !ptr.ptr
+-    // CHECK: alignment = 4
+-    // CHECK: alloca_memory_space = 5
+-    // CHECK: bitsize = 32
+-    // CHECK: global_memory_space = 2
+-    // CHECK: index = 32
+-    // CHECK: preferred = 8
+-    // CHECK: program_memory_space = 3
+-    // CHECK: size = 4
++    "test.data_layout_query"() : () -> !ptr.ptr<#test.const_memory_space>
++    // CHECK: alignment = 1
++    // CHECK: alloca_memory_space = #test.const_memory_space<5>
++    // CHECK: bitsize = 64
++    // CHECK: default_memory_space = #test.const_memory_space<7>
++    // CHECK: global_memory_space = #test.const_memory_space<2>
++    // CHECK: index = 64
++    // CHECK: preferred = 1
++    // CHECK: program_memory_space = #test.const_memory_space<3>
++    // CHECK: size = 8
+     // CHECK: stack_alignment = 128
+-    "test.data_layout_query"() : () -> !ptr.ptr<3>
++    "test.data_layout_query"() : () -> !ptr.ptr<#test.const_memory_space<3>>
+     // CHECK: alignment = 8
+-    // CHECK: alloca_memory_space = 5
++    // CHECK: alloca_memory_space = #test.const_memory_space<5>
+     // CHECK: bitsize = 64
+-    // CHECK: global_memory_space = 2
++    // CHECK: default_memory_space = #test.const_memory_space<7>
++    // CHECK: global_memory_space = #test.const_memory_space<2>
+     // CHECK: index = 64
+     // CHECK: preferred = 8
+-    // CHECK: program_memory_space = 3
++    // CHECK: program_memory_space = #test.const_memory_space<3>
+     // CHECK: size = 8
+     // CHECK: stack_alignment = 128
+-    "test.data_layout_query"() : () -> !ptr.ptr<5>
++    "test.data_layout_query"() : () -> !ptr.ptr<#test.const_memory_space<5>>
+     // CHECK: alignment = 8
+-    // CHECK: alloca_memory_space = 5
++    // CHECK: alloca_memory_space = #test.const_memory_space<5>
+     // CHECK: bitsize = 32
+-    // CHECK: global_memory_space = 2
++    // CHECK: default_memory_space = #test.const_memory_space<7>
++    // CHECK: global_memory_space = #test.const_memory_space<2>
+     // CHECK: index = 24
+     // CHECK: preferred = 8
+-    // CHECK: program_memory_space = 3
++    // CHECK: program_memory_space = #test.const_memory_space<3>
+     // CHECK: size = 4
+     // CHECK: stack_alignment = 128
+-    "test.data_layout_query"() : () -> !ptr.ptr<4>
++    "test.data_layout_query"() : () -> !ptr.ptr<#test.const_memory_space<4>>
++    return
++  }
++}
++
++// -----
++
++module attributes { dlti.dl_spec = #dlti.dl_spec<
++  #dlti.dl_entry<!ptr.ptr<#test.const_memory_space>, #ptr.spec<size = 32, abi = 32, preferred = 32>>,
++  #dlti.dl_entry<"dlti.default_memory_space", #test.const_memory_space>
++>} {
++  // CHECK-LABEL: @default_memory_space
++  func.func @default_memory_space() {
++    // CHECK: alignment = 4
++    // CHECK: bitsize = 32
++    // CHECK: index = 32
++    // CHECK: preferred = 4
++    // CHECK: size = 4
++    "test.data_layout_query"() : () -> !ptr.ptr<#test.const_memory_space>
++    // CHECK: alignment = 4
++    // CHECK: bitsize = 32
++    // CHECK: index = 32
++    // CHECK: preferred = 4
++    // CHECK: size = 4
++    "test.data_layout_query"() : () -> !ptr.ptr<#test.const_memory_space<1>>
++    // CHECK: alignment = 4
++    // CHECK: bitsize = 32
++    // CHECK: index = 32
++    // CHECK: preferred = 4
++    // CHECK: size = 4
++    "test.data_layout_query"() : () -> !ptr.ptr<#test.const_memory_space<2>>
+     return
+   }
+ }
+@@ -59,7 +94,7 @@ module attributes { dlti.dl_spec = #dlti.dl_spec<
+ 
+ // expected-error@+2 {{preferred alignment is expected to be at least as large as ABI alignment}}
+ module attributes { dlti.dl_spec = #dlti.dl_spec<
+-  #dlti.dl_entry<!ptr.ptr, #ptr.spec<size = 64, abi = 64, preferred = 32>>
++  #dlti.dl_entry<!ptr.ptr<#test.const_memory_space>, #ptr.spec<size = 64, abi = 64, preferred = 32>>
+ >} {
+   func.func @pointer() {
+     return
+@@ -70,7 +105,7 @@ module attributes { dlti.dl_spec = #dlti.dl_spec<
+ 
+ // expected-error@+2 {{size entry must be divisible by 8}}
+ module attributes { dlti.dl_spec = #dlti.dl_spec<
+-  #dlti.dl_entry<!ptr.ptr, #ptr.spec<size = 33, abi = 32, preferred = 32>>
++  #dlti.dl_entry<!ptr.ptr<#test.const_memory_space>, #ptr.spec<size = 33, abi = 32, preferred = 32>>
+ >} {
+   func.func @pointer() {
+     return
+@@ -82,7 +117,7 @@ module attributes { dlti.dl_spec = #dlti.dl_spec<
+ 
+ // expected-error@+2 {{abi entry must be divisible by 8}}
+ module attributes { dlti.dl_spec = #dlti.dl_spec<
+-  #dlti.dl_entry<!ptr.ptr, #ptr.spec<size = 32, abi = 33, preferred = 64>>
++  #dlti.dl_entry<!ptr.ptr<#test.const_memory_space>, #ptr.spec<size = 32, abi = 33, preferred = 64>>
+ >} {
+   func.func @pointer() {
+     return
+@@ -94,7 +129,7 @@ module attributes { dlti.dl_spec = #dlti.dl_spec<
+ 
+ // expected-error@+2 {{preferred entry must be divisible by 8}}
+ module attributes { dlti.dl_spec = #dlti.dl_spec<
+-  #dlti.dl_entry<!ptr.ptr, #ptr.spec<size = 32, abi = 32, preferred = 33>>
++  #dlti.dl_entry<!ptr.ptr<#test.const_memory_space>, #ptr.spec<size = 32, abi = 32, preferred = 33>>
+ >} {
+   func.func @pointer() {
+     return
+@@ -106,7 +141,7 @@ module attributes { dlti.dl_spec = #dlti.dl_spec<
+ 
+ // expected-error@+2 {{index entry must be divisible by 8}}
+ module attributes { dlti.dl_spec = #dlti.dl_spec<
+-  #dlti.dl_entry<!ptr.ptr, #ptr.spec<size = 32, abi = 32, preferred = 32, index = 33>>
++  #dlti.dl_entry<!ptr.ptr<#test.const_memory_space>, #ptr.spec<size = 32, abi = 32, preferred = 32, index = 33>>
+ >} {
+   func.func @pointer() {
+     return
+diff --git a/mlir/test/Dialect/Ptr/types.mlir b/mlir/test/Dialect/Ptr/types.mlir
+index 279213bd6fc3..6f4e89eb3e19 100644
+--- a/mlir/test/Dialect/Ptr/types.mlir
++++ b/mlir/test/Dialect/Ptr/types.mlir
+@@ -1,17 +1,24 @@
+ // RUN: mlir-opt %s -split-input-file | mlir-opt | FileCheck %s
+ 
+ // CHECK-LABEL: func @ptr_test
+-// CHECK: (%[[ARG0:.*]]: !ptr.ptr, %[[ARG1:.*]]: !ptr.ptr<1 : i32>)
+-// CHECK: -> (!ptr.ptr<1 : i32>, !ptr.ptr)
+-func.func @ptr_test(%arg0: !ptr.ptr, %arg1: !ptr.ptr<1 : i32>) -> (!ptr.ptr<1 : i32>, !ptr.ptr) {
+-  // CHECK: return %[[ARG1]], %[[ARG0]] : !ptr.ptr<1 : i32>, !ptr.ptr
+-  return %arg1, %arg0 : !ptr.ptr<1 : i32>, !ptr.ptr
++// CHECK: (%[[ARG0:.*]]: !ptr.ptr<#test.const_memory_space>, %[[ARG1:.*]]: !ptr.ptr<#test.const_memory_space<1>>)
++// CHECK: -> (!ptr.ptr<#test.const_memory_space<1>>, !ptr.ptr<#test.const_memory_space>)
++func.func @ptr_test(%arg0: !ptr.ptr<#test.const_memory_space>, %arg1: !ptr.ptr<#test.const_memory_space<1>>) -> (!ptr.ptr<#test.const_memory_space<1>>, !ptr.ptr<#test.const_memory_space>) {
++  // CHECK: return %[[ARG1]], %[[ARG0]] : !ptr.ptr<#test.const_memory_space<1>>, !ptr.ptr<#test.const_memory_space>
++  return %arg1, %arg0 : !ptr.ptr<#test.const_memory_space<1>>, !ptr.ptr<#test.const_memory_space>
+ }
+ 
+ // -----
+ 
+ // CHECK-LABEL: func @ptr_test
+-// CHECK: %[[ARG:.*]]: memref<!ptr.ptr>
+-func.func @ptr_test(%arg0: memref<!ptr.ptr>) {
++// CHECK: %[[ARG:.*]]: memref<!ptr.ptr<#test.const_memory_space>>
++func.func @ptr_test(%arg0: memref<!ptr.ptr<#test.const_memory_space>>) {
++  return
++}
++
++// CHECK-LABEL: func @ptr_test_1
++// CHECK: (%[[ARG0:.*]]: !ptr.ptr<#test.const_memory_space>, %[[ARG1:.*]]: !ptr.ptr<#test.const_memory_space<3>>)
++func.func @ptr_test_1(%arg0: !ptr.ptr<#test.const_memory_space>,
++                      %arg1: !ptr.ptr<#test.const_memory_space<3>>) {
+   return
+ }
+diff --git a/mlir/test/IR/properties.mlir b/mlir/test/IR/properties.mlir
+index 01ea856b0316..418b81dcbb03 100644
+--- a/mlir/test/IR/properties.mlir
++++ b/mlir/test/IR/properties.mlir
+@@ -2,10 +2,10 @@
+ // # RUN: mlir-opt %s -mlir-print-op-generic -split-input-file  | mlir-opt -mlir-print-op-generic | FileCheck %s --check-prefix=GENERIC
+ 
+ // CHECK:   test.with_properties
+-// CHECK-SAME: <{a = 32 : i64, array = array<i64: 1, 2, 3, 4>, b = "foo"}>{{$}}
++// CHECK-SAME: a = 32, b = "foo", c = "bar", flag = true, array = [1, 2, 3, 4]{{$}}
+ // GENERIC:   "test.with_properties"()
+-// GENERIC-SAME: <{a = 32 : i64, array = array<i64: 1, 2, 3, 4>, b = "foo"}> : () -> ()
+-test.with_properties <{a = 32 : i64, array = array<i64: 1, 2, 3, 4>, b = "foo"}>
++// GENERIC-SAME: <{a = 32 : i64, array = array<i64: 1, 2, 3, 4>, b = "foo", c = "bar", flag = true}> : () -> ()
++test.with_properties a = 32, b = "foo", c = "bar", flag = true, array = [1, 2, 3, 4]
+ 
+ // CHECK:   test.with_nice_properties
+ // CHECK-SAME:    "foo bar" is -3{{$}}
+@@ -34,18 +34,48 @@ test.using_property_in_custom [1, 4, 20]
+ // GENERIC-SAME: }>
+ test.using_property_ref_in_custom 1 + 4 = 5
+ 
+-// CHECK:   test.with_default_valued_properties {{$}}
++// CHECK:   test.with_default_valued_properties na{{$}}
+ // GENERIC: "test.with_default_valued_properties"()
+-// GENERIC-SAME:  <{a = 0 : i32}>
+-test.with_default_valued_properties <{a = 0 : i32}>
++// GENERIC-SAME: <{a = 0 : i32, b = "", c = -1 : i32, unit = false}> : () -> ()
++test.with_default_valued_properties 0 "" -1 unit_absent
++
++// CHECK:   test.with_default_valued_properties 1 "foo" 0 unit{{$}}
++// GENERIC: "test.with_default_valued_properties"()
++// GENERIC-SAME: <{a = 1 : i32, b = "foo", c = 0 : i32, unit}> : () -> ()
++test.with_default_valued_properties 1 "foo" 0 unit
+ 
+ // CHECK:   test.with_optional_properties
+-// CHECK-SAME:  <{b = 0 : i32}>
++// CHECK-SAME: simple = 0
++// GENERIC: "test.with_optional_properties"()
++// GENERIC-SAME:  <{hasDefault = [], hasUnit = false, longSyntax = [], maybeUnit = [], nested = [], nonTrivialStorage = [], simple = [0]}> : () -> ()
++test.with_optional_properties simple = 0
++
++// CHECK:   test.with_optional_properties{{$}}
+ // GENERIC: "test.with_optional_properties"()
+-// GENERIC-SAME:  <{b = 0 : i32}>
+-test.with_optional_properties <{b = 0 : i32}>
++// GENERIC-SAME: simple = []
++test.with_optional_properties
+ 
+-// CHECK:   test.with_optional_properties {{$}}
++// CHECK:    test.with_optional_properties
++// CHECK-SAME: anAttr = 0 simple = 1 nonTrivialStorage = "foo" hasDefault = some<0> nested = some<1>  longSyntax = some<"bar"> hasUnit maybeUnit = some<unit>
+ // GENERIC: "test.with_optional_properties"()
+-// GENERIC-SAME:  : () -> ()
++// GENERIC-SAME: <{anAttr = 0 : i32, hasDefault = [0], hasUnit, longSyntax = ["bar"], maybeUnit = [unit], nested = {{\[}}[1]], nonTrivialStorage = ["foo"], simple = [1]}> : () -> ()
+ test.with_optional_properties
++  anAttr = 0
++  simple = 1
++  nonTrivialStorage = "foo"
++  hasDefault = some<0>
++  nested = some<1>
++  longSyntax = some<"bar">
++  hasUnit
++  maybeUnit = some<unit>
++
++// CHECK:    test.with_optional_properties
++// CHECK-SAME: nested = some<none>
++// GENERIC: "test.with_optional_properties"()
++// GENERIC-SAME: nested = {{\[}}[]]
++test.with_optional_properties nested = some<none>
++
++// CHECK:    test.with_array_properties
++// CHECK-SAME: ints = [1, 2] strings = ["a", "b"] nested = {{\[}}[1, 2], [3, 4]] opt = [-1, -2] explicitOptions = [none, 0] explicitUnits = [unit, unit_absent]
++// GENERIC: "test.with_array_properties"()
++test.with_array_properties ints = [1, 2] strings = ["a", "b"] nested = [[1, 2], [3, 4]] opt = [-1, -2] explicitOptions = [none, 0] explicitUnits = [unit, unit_absent] [] thats_has_default
+diff --git a/mlir/test/Transforms/test-legalizer.mlir b/mlir/test/Transforms/test-legalizer.mlir
+index 65c947198e06..a52c0e636f0c 100644
+--- a/mlir/test/Transforms/test-legalizer.mlir
++++ b/mlir/test/Transforms/test-legalizer.mlir
+@@ -408,10 +408,10 @@ func.func @test_move_op_before_rollback() {
+ 
+ // CHECK-LABEL: func @test_properties_rollback()
+ func.func @test_properties_rollback() {
+-  // CHECK: test.with_properties <{a = 32 : i64,
++  // CHECK: test.with_properties a = 32,
+   // expected-remark @below{{op 'test.with_properties' is not legalizable}}
+   test.with_properties
+-      <{a = 32 : i64, array = array<i64: 1, 2, 3, 4>, b = "foo"}>
++      a = 32, b = "foo", c = "bar", flag = true, array = [1, 2, 3, 4]
+       {modify_inplace}
+   "test.return"() : () -> ()
+ }
+diff --git a/mlir/test/lib/Dialect/Test/CMakeLists.txt b/mlir/test/lib/Dialect/Test/CMakeLists.txt
+index 967101242e26..65c0121b798b 100644
+--- a/mlir/test/lib/Dialect/Test/CMakeLists.txt
++++ b/mlir/test/lib/Dialect/Test/CMakeLists.txt
+@@ -85,6 +85,7 @@ add_mlir_library(MLIRTestDialect
+   MLIRLinalgDialect
+   MLIRLinalgTransforms
+   MLIRLLVMDialect
++  MLIRPtrDialect
+   MLIRPass
+   MLIRPolynomialDialect
+   MLIRReduce
+diff --git a/mlir/test/lib/Dialect/Test/TestAttrDefs.td b/mlir/test/lib/Dialect/Test/TestAttrDefs.td
+index a0a1cd30ed8a..007fbab07556 100644
+--- a/mlir/test/lib/Dialect/Test/TestAttrDefs.td
++++ b/mlir/test/lib/Dialect/Test/TestAttrDefs.td
+@@ -17,6 +17,7 @@
+ include "TestDialect.td"
+ include "TestEnumDefs.td"
+ include "mlir/Dialect/Polynomial/IR/PolynomialAttributes.td"
++include "mlir/Dialect/Ptr/IR/MemorySpaceInterfaces.td"
+ include "mlir/Dialect/Utils/StructuredOpsUtils.td"
+ include "mlir/IR/AttrTypeBase.td"
+ include "mlir/IR/BuiltinAttributeInterfaces.td"
+@@ -368,5 +369,15 @@ def NestedPolynomialAttr2 : Test_Attr<"NestedPolynomialAttr2"> {
+   }];
+ }
+ 
++// Test a ptr constant memory space.
++
++
++def TestConstMemorySpaceAttr : Test_Attr<"TestConstMemorySpace", [
++    DeclareAttrInterfaceMethods<MemorySpaceAttrInterface>
++  ]> {
++  let mnemonic = "const_memory_space";
++  let parameters = (ins DefaultValuedParameter<"unsigned", "0">:$addressSpace);
++  let assemblyFormat = "(`<` $addressSpace^ `>`)?";
++}
+ 
+ #endif // TEST_ATTRDEFS
+diff --git a/mlir/test/lib/Dialect/Test/TestAttributes.cpp b/mlir/test/lib/Dialect/Test/TestAttributes.cpp
+index b66dfbfcf089..644e450175b4 100644
+--- a/mlir/test/lib/Dialect/Test/TestAttributes.cpp
++++ b/mlir/test/lib/Dialect/Test/TestAttributes.cpp
+@@ -357,6 +357,49 @@ getDynamicCustomAssemblyFormatAttr(TestDialect *testDialect) {
+                                     std::move(parser), std::move(printer));
+ }
+ 
++//===----------------------------------------------------------------------===//
++// TestConstMemorySpaceAttr
++//===----------------------------------------------------------------------===//
++
++LogicalResult TestConstMemorySpaceAttr::isValidLoad(
++    Type type, mlir::ptr::AtomicOrdering ordering, IntegerAttr alignment,
++    function_ref<InFlightDiagnostic()> emitError) const {
++  return success();
++}
++
++LogicalResult TestConstMemorySpaceAttr::isValidStore(
++    Type type, mlir::ptr::AtomicOrdering ordering, IntegerAttr alignment,
++    function_ref<InFlightDiagnostic()> emitError) const {
++  return emitError ? (emitError() << "memory space is read-only") : failure();
++}
++
++LogicalResult TestConstMemorySpaceAttr::isValidAtomicOp(
++    mlir::ptr::AtomicBinOp binOp, Type type, mlir::ptr::AtomicOrdering ordering,
++    IntegerAttr alignment, function_ref<InFlightDiagnostic()> emitError) const {
++  return emitError ? (emitError() << "memory space is read-only") : failure();
++}
++
++LogicalResult TestConstMemorySpaceAttr::isValidAtomicXchg(
++    Type type, mlir::ptr::AtomicOrdering successOrdering,
++    mlir::ptr::AtomicOrdering failureOrdering, IntegerAttr alignment,
++    function_ref<InFlightDiagnostic()> emitError) const {
++  return emitError ? (emitError() << "memory space is read-only") : failure();
++}
++
++LogicalResult TestConstMemorySpaceAttr::isValidAddrSpaceCast(
++    Type tgt, Type src, function_ref<InFlightDiagnostic()> emitError) const {
++  return emitError
++             ? (emitError() << "memory space doesn't allow addrspace casts")
++             : failure();
++}
++
++LogicalResult TestConstMemorySpaceAttr::isValidPtrIntCast(
++    Type intLikeTy, Type ptrLikeTy,
++    function_ref<InFlightDiagnostic()> emitError) const {
++  return emitError ? (emitError() << "memory space doesn't allow int-ptr casts")
++                   : failure();
++}
++
+ //===----------------------------------------------------------------------===//
+ // TestDialect
+ //===----------------------------------------------------------------------===//
+diff --git a/mlir/test/lib/Dialect/Test/TestAttributes.h b/mlir/test/lib/Dialect/Test/TestAttributes.h
+index 7099bcf31729..bcbc360758ee 100644
+--- a/mlir/test/lib/Dialect/Test/TestAttributes.h
++++ b/mlir/test/lib/Dialect/Test/TestAttributes.h
+@@ -18,6 +18,7 @@
+ 
+ #include "TestTraits.h"
+ #include "mlir/Dialect/Polynomial/IR/PolynomialAttributes.h"
++#include "mlir/Dialect/Ptr/IR/MemorySpaceInterfaces.h"
+ #include "mlir/Dialect/Utils/StructuredOpsUtils.h"
+ #include "mlir/IR/Attributes.h"
+ #include "mlir/IR/Diagnostics.h"
+diff --git a/mlir/test/mlir-tblgen/op-format.td b/mlir/test/mlir-tblgen/op-format.td
+index 4a19ffb3dfcc..8af4341952f0 100644
+--- a/mlir/test/mlir-tblgen/op-format.td
++++ b/mlir/test/mlir-tblgen/op-format.td
+@@ -73,7 +73,7 @@ def OptionalGroupA : TestFormat_Op<[{
+ // CHECK-NEXT: result.addAttribute("a", parser.getBuilder().getUnitAttr())
+ // CHECK: parser.parseKeyword("bar")
+ // CHECK-LABEL: OptionalGroupB::print
+-// CHECK: if (!getAAttr())
++// CHECK: if (!(getAAttr() && getAAttr() != ((false) ? ::mlir::OpBuilder((*this)->getContext()).getUnitAttr() : nullptr)))
+ // CHECK-NEXT: odsPrinter << ' ' << "foo"
+ // CHECK-NEXT: else
+ // CHECK-NEXT: odsPrinter << ' ' << "bar"
+@@ -84,7 +84,7 @@ def OptionalGroupB : TestFormat_Op<[{
+ // Optional group anchored on a default-valued attribute:
+ // CHECK-LABEL: OptionalGroupC::parse
+ 
+-//       CHECK: if (getAAttr() && getAAttr() != ::mlir::OpBuilder((*this)->getContext()).getStringAttr("default")) {
++//       CHECK: if (getAAttr() != ::mlir::OpBuilder((*this)->getContext()).getStringAttr("default")) {
+ //  CHECK-NEXT:   odsPrinter << ' ';
+ //  CHECK-NEXT:   odsPrinter.printAttributeWithoutType(getAAttr());
+ //  CHECK-NEXT: }
 -- 
 Gitee
 
