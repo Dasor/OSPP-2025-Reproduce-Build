@@ -9,12 +9,15 @@ Only tested with python3.9 up to python3.11
 ```shell
 pip install setuptools>=40.8.0
 pip install wheel
-pip install cmake>=3.18,<4.0
+pip install "cmake>=3.18,<4.0"
 pip install ninja>=1.11.1
 pip install pybind11>=2.13.1
 pip install lit
 pip install nanobind
+pip install numpy
 ```
+Note1: using -i https://pypi.tuna.tsinghua.edu.cn/simple will probably speedup your downloading speed on China based machines.
+Note2: On the blue  zone machine when using another user, pip was not linked with the python in PATH. `python3 -m pip` is prefer red.
 
 ## 2. LLVM
 
@@ -38,21 +41,24 @@ There are many patches that need to be applied they are in the patches dir and s
 | 0007  | -                                                                | -                                                                                                         |   |   |
 | 0008  | [link](https://gitee.com/openeuler/llvm-project/pulls/269)       | Several, see Gitee PR                                                                                     |   |   |
 
-to aplly all patches in order just:
+to apply all patches in order, simply:
 
 ```shell
-ls ../patches/*.patch | sort | xargs -n 1 git apply --whitespace=nowarn
+ls ../OSPP-2025-Reproduce-Build/patches/*.patch | sort | xargs -n 1 git apply --whitespace=nowarn
 ```
 
 and then compile:
 
 ```shell
-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_ASSERTIONS=ON ../llvm -DLLVM_ENABLE_PROJECTS="mlir;llvm" -DLLVM_TARGETS_TO_BUILD="host;NVPTX;AMDGPU;AArch64" -DMLIR_ENABLE_BINDINGS_PYTHON=ON -DPython3_EXECUTABLE=$(which python3) -DMLIR_INCLUDE_INTEGRATION_TESTS=ON -DLLVM_ENABLE_RTTI=ON -DBUILD_SHARED_LIBS=ON
+mkdir build; cd build
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_ASSERTIONS=ON ../llvm -DLLVM_ENABLE_PROJECTS="mlir;llvm;clang;clang-tools-extra" -DLLVM_TARGETS_TO_BUILD="host;NVPTX;AMDGPU;AArch64" -DMLIR_ENABLE_BINDINGS_PYTHON=ON -DPython3_EXECUTABLE=$(which python3) -DMLIR_INCLUDE_INTEGRATION_TESTS=ON -DLLVM_ENABLE_RTTI=ON -DBUILD_SHARED_LIBS=ON
 ninja
 ```
 
 
 It is important to note that we are using the MLIR python bindings so the python version used to compile llvm (in this case the one pointed by `$(which python3)`) must be the same we use to run triton.
+
+Troubleshooting: If you encounter some error such as "mlir/Dialect/Math/Transforms/Passes.h.inc" does not exist, build withouth patches first, apply patches and rebuild using `ninja`. There must be a dependency missing in CMakeLists.
 
 
 ## 3. Triton-cpu + Triton-shared
@@ -69,7 +75,7 @@ export LLVM_LIBRARY_DIR=$LLVM_BUILD_DIR/lib
 export LLVM_SYSPATH=$LLVM_BUILD_DIR
 export PATH=$LLVM_BUILD_DIR/bin:$PATH
 export TRITON_BUILD_WITH_CLANG_LLD=true
-export TRITON_PLUGIN_DIRS=$(pwd)/triton-shared
+export TRITON_PLUGIN_DIRS=$YOUR_WORKDIR/triton-cpu/triton-shared
 pip install -e python
 ```
 
@@ -86,10 +92,10 @@ We need this enviroment variable for triton to work no matter the backend we are
 ```shell
 export TRITON_USE_SHARED_BACKEND=1
 export LLVM_BINARY_DIR=$YOUR_WORKDIR/llvm-project/build/bin/
-export TRITON_SHARED_OPT_PATH=$YOUR_WORKDIR/triton_cpu/python/build/cmake.linux-{arch}-cpython-{version}/third_party/triton_shared/tools/triton-shared-opt/triton-shared-opt
+export TRITON_SHARED_OPT_PATH=$YOUR_WORKDIR/triton-cpu/python/build/cmake.linux-{arch}-cpython-{version}/third_party/triton_shared/tools/triton-shared-opt/triton-shared-opt
 ```
 
-The first just activates the triton-shared backend, and the next two point to important files that triton-shared needs to use, depending on the archquitecture of the server and the python version the last path will be different.
+The first just activates the triton-shared backend, and the next two point to important files that triton-shared needs to use. Depending on the architecture of the server and the python version the last path will be different.
 
 ## 4. Tips for debugging and testing
 
@@ -108,7 +114,7 @@ ttshared.mlir # MLIR IR (this is usually the most important)
 tt.mlir # Triton IR
 ```
 
-Most debugging happends around `ttshared.mlir` as it is the crucial step between triton and standard MLIR. Another **VERY IMPORTANT** thing to take into account is to **ALWAYS DELETE THE TRITON CACHE** before running as triton may pick the code stored in cache and not apply any of your new changes. The best way to do it's to just append the remove command before your python execution like this:
+Most debugging happens around `ttshared.mlir` as it is the crucial step between triton and standard MLIR. Another **VERY IMPORTANT** thing to take into account is to **ALWAYS DELETE THE TRITON CACHE** before running as triton may pick the code stored in cache and not apply any of your new changes. The best way to do it's to just append the remove command before your python execution like this:
 
 ```shell
 rm -rf ~/.triton/cache/ && python program.py
