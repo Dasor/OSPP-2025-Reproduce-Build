@@ -37,6 +37,7 @@ There are many patches that need to be applied they are in the patches dir and s
 | 0006  | [link](https://gitee.com/openeuler/llvm-project/pulls/266)       | Several, see Gitee PR                                                                                     |   |   |
 | 0007  | -                                                                | -                                                                                                         |   |   |
 | 0008  | [link](https://gitee.com/openeuler/llvm-project/pulls/269)       | Several, see Gitee PR                                                                                     |   |   |
+| 0009  | [link](https://gitee.com/openeuler/llvm-project/pulls/280)       |                                                                                                           |   |   |
 
 to aplly all patches in order just:
 
@@ -70,7 +71,7 @@ export LLVM_SYSPATH=$LLVM_BUILD_DIR
 export PATH=$LLVM_BUILD_DIR/bin:$PATH
 export TRITON_BUILD_WITH_CLANG_LLD=true
 export TRITON_PLUGIN_DIRS=$(pwd)/triton-shared
-pip install -e python
+pip install -e --no-build-isolation python
 ```
 
 ## 4. Using triton-shared (MLIR Backend)
