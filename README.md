@@ -54,6 +54,11 @@ cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_ASSERTIONS=ON ../llvm -D
 ninja
 ```
 
+Make sure python bindings have been generated. 
+```
+file tools/mlir/python_packages/mlir_core
+```
+If it does not exist, force build with : `ninja check-mlir-python`
 
 It is important to note that we are using the MLIR python bindings so the python version used to compile llvm (in this case the one pointed by `$(which python3)`) must be the same we use to run triton.
 
@@ -72,6 +77,7 @@ export LLVM_BUILD_DIR=$YOUR_WORKDIR/llvm-project/build
 export LLVM_INCLUDE_DIRS=$LLVM_BUILD_DIR/include
 export LLVM_LIBRARY_DIR=$LLVM_BUILD_DIR/lib
 export LLVM_SYSPATH=$LLVM_BUILD_DIR
+export PYTHONPATH=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
 export PATH=$LLVM_BUILD_DIR/bin:$PATH
 export TRITON_BUILD_WITH_CLANG_LLD=true
 export TRITON_PLUGIN_DIRS=$YOUR_WORKDIR/triton-cpu/triton-shared
