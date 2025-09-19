@@ -123,6 +123,7 @@ This is also essential when running test, to run test triton uses pytest
 
 ```shell
 pip install pytest-xdist
+pip install torch
 ```
 
 Then:
