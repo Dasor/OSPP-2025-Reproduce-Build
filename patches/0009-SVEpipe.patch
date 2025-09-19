@@ -1,0 +1,388 @@
+From 3cbafb432fd9671d4df860e43f997794ead1ef13 Mon Sep 17 00:00:00 2001
+From: Hugo <hugo.trachino@huawei.com>
+Date: Fri, 12 Sep 2025 18:20:42 +0800
+Subject: [PATCH] Add SVE lowering
+
+---
+ .../Vector/TransformOps/VectorTransformOps.td |  7 +-
+ .../Vector/Transforms/LoweringPatterns.h      |  1 +
+ .../Vector/Transforms/VectorTransforms.h      |  6 ++
+ .../VectorToLLVM/ConvertVectorToLLVMPass.cpp  |  2 +
+ .../TransformOps/VectorTransformOps.cpp       |  4 +-
+ .../Dialect/Vector/Transforms/CMakeLists.txt  |  1 +
+ .../Vector/Transforms/LowerVectorContract.cpp | 71 +++++++++++++----
+ mlir/lib/Target/LLVMIR/ModuleTranslation.cpp  | 13 ++++
+ .../VectorToLLVM/vector-to-llvm.mlir          |  4 +-
+ .../Vector/lower-vectors-sve-enabled.mlir     | 77 +++++++++++++++++++
+ ...ctor-outerproduct-lowering-transforms.mlir |  8 +-
+ 11 files changed, 171 insertions(+), 23 deletions(-)
+ create mode 100644 mlir/test/Dialect/Vector/lower-vectors-sve-enabled.mlir
+
+diff --git a/mlir/include/mlir/Dialect/Vector/TransformOps/VectorTransformOps.td b/mlir/include/mlir/Dialect/Vector/TransformOps/VectorTransformOps.td
+index 820a18731ffd..4a8f38c12698 100644
+--- a/mlir/include/mlir/Dialect/Vector/TransformOps/VectorTransformOps.td
++++ b/mlir/include/mlir/Dialect/Vector/TransformOps/VectorTransformOps.td
+@@ -223,7 +223,12 @@ def ApplyLowerOuterProductPatternsOp : Op<Transform_Dialect,
+     process of lowering to e.g. LLVM or NVVM.
+   }];
+ 
+-  let assemblyFormat = "attr-dict";
++  let arguments = (ins DefaultValuedAttr<BoolAttr, "false">:$isSVE
++  );
++
++  let assemblyFormat = [{
++    (`enableSVE` `=` $isSVE^)? attr-dict
++  }];
+ }
+ 
+ def ApplyLowerGatherPatternsOp : Op<Transform_Dialect,
+diff --git a/mlir/include/mlir/Dialect/Vector/Transforms/LoweringPatterns.h b/mlir/include/mlir/Dialect/Vector/Transforms/LoweringPatterns.h
+index 1976b8399c7f..c8209755847e 100644
+--- a/mlir/include/mlir/Dialect/Vector/Transforms/LoweringPatterns.h
++++ b/mlir/include/mlir/Dialect/Vector/Transforms/LoweringPatterns.h
+@@ -56,6 +56,7 @@ void populateVectorContractLoweringPatterns(
+ /// Progressively lower a `vector.outerproduct` to linearized
+ /// `vector.extract` + `vector.fma` + `vector.insert`.
+ void populateVectorOuterProductLoweringPatterns(RewritePatternSet &patterns,
++                                                VectorTransformsOptions options,
+                                                 PatternBenefit benefit = 1);
+ 
+ /// Collect a set of patterns to convert vector.multi_reduction op into
+diff --git a/mlir/include/mlir/Dialect/Vector/Transforms/VectorTransforms.h b/mlir/include/mlir/Dialect/Vector/Transforms/VectorTransforms.h
+index 1f7d6411cd5a..f878e1ec5dcf 100644
+--- a/mlir/include/mlir/Dialect/Vector/Transforms/VectorTransforms.h
++++ b/mlir/include/mlir/Dialect/Vector/Transforms/VectorTransforms.h
+@@ -59,6 +59,12 @@ struct VectorTransformsOptions {
+     vectorTransferSplit = opt;
+     return *this;
+   }
++  /// Option to arm_sve lowering.
++  bool armSve = false;
++  VectorTransformsOptions &enableArmSVE(bool enableArmSve) {
++    armSve = enableArmSve;
++    return *this;
++  }
+ };
+ 
+ //===----------------------------------------------------------------------===//
+diff --git a/mlir/lib/Conversion/VectorToLLVM/ConvertVectorToLLVMPass.cpp b/mlir/lib/Conversion/VectorToLLVM/ConvertVectorToLLVMPass.cpp
+index 55143d5939ba..56b1fd2a882e 100644
+--- a/mlir/lib/Conversion/VectorToLLVM/ConvertVectorToLLVMPass.cpp
++++ b/mlir/lib/Conversion/VectorToLLVM/ConvertVectorToLLVMPass.cpp
+@@ -66,6 +66,8 @@ void LowerVectorToLLVMPass::runOnOperation() {
+     populateVectorToVectorCanonicalizationPatterns(patterns);
+     populateVectorBitCastLoweringPatterns(patterns);
+     populateVectorBroadcastLoweringPatterns(patterns);
++    populateVectorContractLoweringPatterns(
++      patterns, VectorTransformsOptions().enableArmSVE(armSVE));
+     populateVectorContractLoweringPatterns(patterns, VectorTransformsOptions());
+     populateVectorMaskOpLoweringPatterns(patterns);
+     populateVectorShapeCastLoweringPatterns(patterns);
+diff --git a/mlir/lib/Dialect/Vector/TransformOps/VectorTransformOps.cpp b/mlir/lib/Dialect/Vector/TransformOps/VectorTransformOps.cpp
+index 2e9aa8801182..4ed4aa57565f 100644
+--- a/mlir/lib/Dialect/Vector/TransformOps/VectorTransformOps.cpp
++++ b/mlir/lib/Dialect/Vector/TransformOps/VectorTransformOps.cpp
+@@ -129,7 +129,9 @@ void transform::ApplyLowerMultiReductionPatternsOp::populatePatterns(
+ 
+ void transform::ApplyLowerOuterProductPatternsOp::populatePatterns(
+     RewritePatternSet &patterns) {
+-  populateVectorOuterProductLoweringPatterns(patterns);
++      vector::VectorTransformsOptions vectorTransformOptions;
++      vectorTransformOptions.enableArmSVE(getIsSVE());
++      populateVectorOuterProductLoweringPatterns(patterns, vectorTransformOptions);
+ }
+ 
+ void transform::ApplyLowerGatherPatternsOp::populatePatterns(
+diff --git a/mlir/lib/Dialect/Vector/Transforms/CMakeLists.txt b/mlir/lib/Dialect/Vector/Transforms/CMakeLists.txt
+index 723b2f62d65d..22bb8fa4e631 100644
+--- a/mlir/lib/Dialect/Vector/Transforms/CMakeLists.txt
++++ b/mlir/lib/Dialect/Vector/Transforms/CMakeLists.txt
+@@ -40,6 +40,7 @@ add_mlir_dialect_library(MLIRVectorTransforms
+   MLIRGPUDialect
+   MLIRIR
+   MLIRLinalgDialect
++  MLIRLLVMDialect
+   MLIRMemRefDialect
+   MLIRMemRefUtils
+   MLIRSCFDialect
+diff --git a/mlir/lib/Dialect/Vector/Transforms/LowerVectorContract.cpp b/mlir/lib/Dialect/Vector/Transforms/LowerVectorContract.cpp
+index 3a799ce8e0bc..748ac6fe96eb 100644
+--- a/mlir/lib/Dialect/Vector/Transforms/LowerVectorContract.cpp
++++ b/mlir/lib/Dialect/Vector/Transforms/LowerVectorContract.cpp
+@@ -14,6 +14,7 @@
+ #include "mlir/Dialect/Affine/IR/AffineOps.h"
+ #include "mlir/Dialect/Arith/IR/Arith.h"
+ #include "mlir/Dialect/Arith/Utils/Utils.h"
++#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+ #include "mlir/Dialect/Linalg/IR/Linalg.h"
+ #include "mlir/Dialect/MemRef/IR/MemRef.h"
+ #include "mlir/Dialect/SCF/IR/SCF.h"
+@@ -1200,8 +1201,15 @@ FailureOr<Value> ContractionOpLowering::lowerReduction(
+ ///   %x = vector.insert %.., %..[N-1]
+ ///
+ class OuterProductOpLowering : public OpRewritePattern<vector::OuterProductOp> {
++private:
++  vector::VectorTransformsOptions vectorTransformOptions;
++
+ public:
+   using OpRewritePattern::OpRewritePattern;
++  OuterProductOpLowering(vector::VectorTransformsOptions vectorTransformOptions,
++                         MLIRContext *context, PatternBenefit benefit = 1)
++      : OpRewritePattern<vector::OuterProductOp>(context, benefit),
++        vectorTransformOptions(vectorTransformOptions) {}
+ 
+   LogicalResult matchAndRewrite(vector::OuterProductOp op,
+                                 PatternRewriter &rewriter) const override {
+@@ -1246,19 +1254,51 @@ public:
+         loc, resType, rewriter.getZeroAttr(resType));
+     for (int64_t d = 0, e = resType.getDimSize(0); d < e; ++d) {
+       Value x = rewriter.create<vector::ExtractOp>(loc, op.getLhs(), d);
+-      Value a = rewriter.create<vector::BroadcastOp>(loc, rhsType, x);
+-      Value r = nullptr;
+-      if (acc)
++       Value r = nullptr;
++       if (acc)
+         r = rewriter.create<vector::ExtractOp>(loc, acc, d);
+-      Value extrMask;
+-      if (mask)
+-        extrMask = rewriter.create<vector::ExtractOp>(loc, mask, d);
+-
+-      std::optional<Value> m = createContractArithOp(
+-          loc, a, op.getRhs(), r, kind, rewriter, isInt, extrMask);
+-      if (!m.has_value())
+-        return failure();
+-      result = rewriter.create<vector::InsertOp>(loc, *m, result, d);
++      if (vectorTransformOptions.armSve) {
++        long sizeOfScalableVector =
++            128 /
++            mlir::LLVM::getPrimitiveTypeSizeInBits(resType.getElementType());
++        assert(d <= sizeOfScalableVector && "Unsupported index for SVE fmla");
++        Type vectype = VectorType::get({sizeOfScalableVector},
++                                       rhsType.getElementType(), 1);
++        auto udef = rewriter.create<LLVM::UndefOp>(loc, vectype);
++        auto ScalableLhs = rewriter.create<vector::ScalableInsertOp>(
++            loc, op.getLhs(), udef, 0);
++        auto i0 = rewriter.create<arith::ConstantOp>(
++            loc, rewriter.getZeroAttr(rewriter.getI64Type()));
++        StringAttr dupq = rewriter.getStringAttr("llvm.aarch64.sve.dupq.lane");
++        auto lhsdup = rewriter.create<LLVM::CallIntrinsicOp>(
++            loc, TypeRange{vectype}, dupq, ValueRange{ScalableLhs, i0});
++        auto broadcastedLHS = lhsdup.getResult(0);
++        auto rhs = rewriter.create<vector::ScalableInsertOp>(loc, op.getRhs(),
++                                                             udef, 0);
++        r = rewriter.create<vector::ScalableInsertOp>(loc, r, udef, 0);
++        auto idx = rewriter.create<arith::ConstantOp>(
++            loc, rewriter.getI32IntegerAttr(d));
++        LLVM::CallIntrinsicOp fma;
++        StringAttr fmla = rewriter.getStringAttr("llvm.aarch64.sve.fmla.lane");
++        fma = rewriter.create<LLVM::CallIntrinsicOp>(
++            loc, TypeRange{vectype}, fmla,
++            ValueRange{r, rhs, broadcastedLHS, idx});
++        auto mm = rewriter.create<vector::ScalableExtractOp>(
++            loc, rhsType, fma.getResult(0), 0);
++        result =
++            rewriter.create<vector::InsertOp>(loc, mm, result, d);
++      } else {
++        Value a = rewriter.create<vector::BroadcastOp>(loc, rhsType, x);
++        Value extrMask;
++        if (mask)
++          extrMask = rewriter.create<vector::ExtractOp>(loc, mask, d);
++
++        std::optional<Value> m = createContractArithOp(
++            loc, a, op.getRhs(), r, kind, rewriter, isInt, extrMask);
++        if (!m.has_value())
++          return failure();
++        result = rewriter.create<vector::InsertOp>(loc, *m, result, d);
++      }
+     }
+ 
+     rewriter.replaceOp(rootOp, result);
+@@ -1378,13 +1418,14 @@ void mlir::vector::populateVectorContractLoweringPatterns(
+     RewritePatternSet &patterns, VectorTransformsOptions options,
+     PatternBenefit benefit, bool disableOuterProductLowering) {
+   if (!disableOuterProductLowering)
+-    patterns.add<OuterProductOpLowering>(patterns.getContext(), benefit);
++    patterns.add<OuterProductOpLowering>(options, patterns.getContext(), benefit);
+   patterns.add<ContractionOpLowering, ContractionOpToMatmulOpLowering,
+                ContractionOpToOuterProductOpLowering>(
+       options, patterns.getContext(), benefit);
+ }
+ 
+ void mlir::vector::populateVectorOuterProductLoweringPatterns(
+-    RewritePatternSet &patterns, PatternBenefit benefit) {
+-  patterns.add<OuterProductOpLowering>(patterns.getContext(), benefit);
++        RewritePatternSet &patterns, VectorTransformsOptions options,
++        PatternBenefit benefit) {
++      patterns.add<OuterProductOpLowering>(options, patterns.getContext(), benefit);
+ }
+diff --git a/mlir/lib/Target/LLVMIR/ModuleTranslation.cpp b/mlir/lib/Target/LLVMIR/ModuleTranslation.cpp
+index fc3fb0b5334c..666844d16fcb 100644
+--- a/mlir/lib/Target/LLVMIR/ModuleTranslation.cpp
++++ b/mlir/lib/Target/LLVMIR/ModuleTranslation.cpp
+@@ -1224,6 +1224,19 @@ static LogicalResult checkedAddLLVMFnAttribute(Location loc,
+     llvmFunc->addFnAttr(key, value);
+     return success();
+   }
++  if (kind == llvm::Attribute::VScaleRange) {
++    llvm::AttrBuilder attr_builder(llvmFunc->getContext());
++    int result;
++    if (!value.getAsInteger(/*Radix=*/0, result))
++      attr_builder.addVScaleRangeAttr(result, std::nullopt);
++    else
++      return emitError(loc)
++             << "LLVM attribute 'vscale_range' expects an integer value";
++
++    llvmFunc->addFnAttrs(attr_builder);
++    return success();
++  }
++  
+ 
+   if (llvm::Attribute::isIntAttrKind(kind)) {
+     if (value.empty())
+diff --git a/mlir/test/Conversion/VectorToLLVM/vector-to-llvm.mlir b/mlir/test/Conversion/VectorToLLVM/vector-to-llvm.mlir
+index c310954b906e..20a74a235b15 100644
+--- a/mlir/test/Conversion/VectorToLLVM/vector-to-llvm.mlir
++++ b/mlir/test/Conversion/VectorToLLVM/vector-to-llvm.mlir
+@@ -400,16 +400,16 @@ func.func @outerproduct_add(%arg0: vector<2xf32>, %arg1: vector<3xf32>, %arg2: v
+ // CHECK:       %[[T10:.*]] = builtin.unrealized_conversion_cast %[[T3]] : vector<2x3xf32> to !llvm.array<2 x vector<3xf32>>
+ // CHECK:       %[[T4:.*]] = llvm.mlir.constant(0 : i64) : i64
+ // CHECK:       %[[T5:.*]] = llvm.extractelement %[[A]]{{\[}}%[[T4]] : i64] : vector<2xf32>
++// CHECK:       %[[T8:.*]] = llvm.extractvalue %[[T7]][0] : !llvm.array<2 x vector<3xf32>>
+ // CHECK:       %[[T6Insert:.*]] = llvm.insertelement %[[T5]]
+ // CHECK:       %[[T6:.*]] = llvm.shufflevector %[[T6Insert]]
+-// CHECK:       %[[T8:.*]] = llvm.extractvalue %[[T7]][0] : !llvm.array<2 x vector<3xf32>>
+ // CHECK:       %[[T9:.*]] = llvm.intr.fmuladd(%[[T6]], %[[B]], %[[T8]]) : (vector<3xf32>, vector<3xf32>, vector<3xf32>) -> vector<3xf32>
+ // CHECK:       %[[T11:.*]] = llvm.insertvalue %[[T9]], %[[T10]][0] : !llvm.array<2 x vector<3xf32>>
+ // CHECK:       %[[T12:.*]] = llvm.mlir.constant(1 : i64) : i64
+ // CHECK:       %[[T13:.*]] = llvm.extractelement %[[A]]{{\[}}%[[T12]] : i64] : vector<2xf32>
++// CHECK:       %[[T16:.*]] = llvm.extractvalue %[[T7]][1] : !llvm.array<2 x vector<3xf32>>
+ // CHECK:       %[[T14Insert:.*]] = llvm.insertelement %[[T13]]
+ // CHECK:       %[[T14:.*]] = llvm.shufflevector %[[T14Insert]]
+-// CHECK:       %[[T16:.*]] = llvm.extractvalue %[[T7]][1] : !llvm.array<2 x vector<3xf32>>
+ // CHECK:       %[[T17:.*]] = llvm.intr.fmuladd(%[[T14]], %[[B]], %[[T16]]) : (vector<3xf32>, vector<3xf32>, vector<3xf32>) -> vector<3xf32>
+ // CHECK:       %[[T18:.*]] = llvm.insertvalue %[[T17]], %[[T11]][1] : !llvm.array<2 x vector<3xf32>>
+ // CHECK:       %[[T19:.*]] = builtin.unrealized_conversion_cast %[[T18]] : !llvm.array<2 x vector<3xf32>> to vector<2x3xf32>
+diff --git a/mlir/test/Dialect/Vector/lower-vectors-sve-enabled.mlir b/mlir/test/Dialect/Vector/lower-vectors-sve-enabled.mlir
+new file mode 100644
+index 000000000000..10154601402a
+--- /dev/null
++++ b/mlir/test/Dialect/Vector/lower-vectors-sve-enabled.mlir
+@@ -0,0 +1,77 @@
++// RUN: mlir-opt %s --transform-interpreter --canonicalize | FileCheck %s
++
++// CHECK-LABEL: func @outerproduct4x8
++// CHECK-SAME: %[[A:.*]]: vector<4xf32>, %[[B:.*]]: vector<8xf32>, %[[C:.*]]: vector<4x8xf32>
++// CHECK-DAG: %[[C0:.*]] = vector.extract  %[[C]][0] : vector<8xf32> from vector<4x8xf32
++// CHECK-DAG: %[[A0:.*]] = vector.scalable.insert %[[A]]{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[A1:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.dupq.lane"(%[[A0]], %c0_i64)
++// CHECK-DAG: %[[C1:.*]] = vector.scalable.insert %[[C0]],{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[B0:.*]] = vector.scalable.insert %[[B]],{{.*}} into vector<[4]xf32>
++// CHECK: %[[FMLA0:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.fmla.lane"(%[[C1]], %[[B0]], %[[A1]], %c0_i32){{.*}} vector<[4]xf32>
++// CHECK-NEXT: %[[R0:.*]] = vector.scalable.extract %[[FMLA0]][0] : vector<8xf32> from vector<[4]xf32>
++// CHECK-NEXT: %[[I0:.*]] = vector.insert %[[R0]], %cst [0] : vector<8xf32> into vector<4x8xf32>
++// CHECK-DAG: %[[A2:.*]] = vector.scalable.insert %[[A]]{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[A3:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.dupq.lane"(%[[A2]], %c0_i64)
++// CHECK-DAG: %[[C2:.*]] = vector.extract %[[C]][1] : vector<8xf32> from vector<4x8xf32>
++// CHECK-DAG: %[[C3:.*]] = vector.scalable.insert %[[C2]],{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[B1:.*]] = vector.scalable.insert %[[B]],{{.*}} into vector<[4]xf32>
++// CHECK: %[[FMLA1:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.fmla.lane"(%[[C3]], %[[B1]], %[[A3]], %c1_i32){{.*}} vector<[4]xf32>
++// CHECK-NEXT: %[[R1:.*]] = vector.scalable.extract %[[FMLA1]][0] : vector<8xf32> from vector<[4]xf32>
++// CHECK-NEXT: %[[I1:.*]] = vector.insert %[[R1]], %[[I0]] [1] : vector<8xf32> into vector<4x8xf32>
++// CHECK-DAG: %[[A4:.*]] = vector.scalable.insert %[[A]]{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[A5:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.dupq.lane"(%[[A4]], %c0_i64)
++// CHECK-DAG: %[[C4:.*]] = vector.extract %[[C]][2] : vector<8xf32> from vector<4x8xf32>
++// CHECK-DAG: %[[C5:.*]] = vector.scalable.insert %[[C4]],{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[B2:.*]] = vector.scalable.insert %[[B]],{{.*}} into vector<[4]xf32>
++// CHECK: %[[FMLA2:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.fmla.lane"(%[[C5]], %[[B2]], %[[A5]], %c2_i32){{.*}} vector<[4]xf32>
++// CHECK-NEXT: %[[R2:.*]] = vector.scalable.extract %[[FMLA2]][0] : vector<8xf32> from vector<[4]xf32>
++// CHECK-NEXT: %[[I2:.*]] = vector.insert %[[R2]], %[[I1]] [2] : vector<8xf32> into vector<4x8xf32>
++// CHECK-DAG: %[[A6:.*]] = vector.scalable.insert %[[A]]{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[A7:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.dupq.lane"(%[[A6]], %c0_i64)
++// CHECK-DAG: %[[C6:.*]] = vector.extract %[[C]][3] : vector<8xf32> from vector<4x8xf32>
++// CHECK-DAG: %[[C7:.*]] = vector.scalable.insert %[[C6]],{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[B3:.*]] = vector.scalable.insert %[[B]],{{.*}} into vector<[4]xf32>
++// CHECK: %[[FMLA3:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.fmla.lane"(%[[C7]], %[[B3]], %[[A7]], %c3_i32){{.*}} vector<[4]xf32>
++// CHECK-NEXT: %[[R3:.*]] = vector.scalable.extract %[[FMLA3]][0] : vector<8xf32> from vector<[4]xf32>
++// CHECK-NEXT: %[[I3:.*]] = vector.insert %[[R3]], %[[I2]] [3] : vector<8xf32> into vector<4x8xf32>
++// CHECK: return %[[I3]]
++func.func @outerproduct4x8(%arg0 : vector<4xf32>, %arg1 : vector<8xf32>, %arg2 : vector<4x8xf32>) ->vector<4x8xf32> {
++    %0 = vector.outerproduct %arg0, %arg1, %arg2 {kind = #vector.kind<add>} : vector<4xf32>, vector<8xf32>
++    return %0 : vector<4x8xf32>
++}
++
++// CHECK-LABEL: func @outerproduct2x8
++// CHECK-SAME: %[[A:.*]]: vector<2xf32>, %[[B:.*]]: vector<8xf32>, %[[C:.*]]: vector<2x8xf32>
++// CHECK-DAG: %[[C0:.*]] = vector.extract %[[C]][0] : vector<8xf32> from vector<2x8xf32>
++// CHECK-DAG: %[[A0:.*]] = vector.scalable.insert %[[A]]{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[A1:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.dupq.lane"(%[[A0]], %c0_i64)
++// CHECK-DAG: %[[C1:.*]] = vector.scalable.insert %[[C0]],{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[B0:.*]] = vector.scalable.insert %[[B]],{{.*}} into vector<[4]xf32>
++// CHECK: %[[FMLA0:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.fmla.lane"(%[[C1]], %[[B0]], %[[A1]], %c0_i32){{.*}} vector<[4]xf32>
++// CHECK-NEXT: %[[R0:.*]] = vector.scalable.extract %[[FMLA0]][0] : vector<8xf32> from vector<[4]xf32>
++// CHECK-NEXT: %[[I0:.*]] = vector.insert %[[R0]], %cst [0] : vector<8xf32> into vector<2x8xf32>
++// CHECK-DAG: %[[A2:.*]] = vector.scalable.insert %[[A]]{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[A3:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.dupq.lane"(%[[A2]], %c0_i64)
++// CHECK-DAG: %[[C2:.*]] = vector.extract %[[C]][1] : vector<8xf32> from vector<2x8xf32>
++// CHECK-DAG: %[[C3:.*]] = vector.scalable.insert %[[C2]],{{.*}} into vector<[4]xf32>
++// CHECK-DAG: %[[B1:.*]] = vector.scalable.insert %[[B]],{{.*}} into vector<[4]xf32>
++// CHECK: %[[FMLA1:.*]] = llvm.call_intrinsic "llvm.aarch64.sve.fmla.lane"(%[[C3]], %[[B1]], %[[A3]], %c1_i32){{.*}} vector<[4]xf32>
++// CHECK-NEXT: %[[R1:.*]] = vector.scalable.extract %[[FMLA1]][0] : vector<8xf32> from vector<[4]xf32>
++// CHECK-NEXT: %[[I1:.*]] = vector.insert %[[R1]], %[[I0]] [1] : vector<8xf32> into vector<2x8xf32>
++// CHECK: return %[[I1]]
++func.func @outerproduct2x8(%arg0 : vector<2xf32>, %arg1 : vector<8xf32>, %arg2 : vector<2x8xf32>) ->vector<2x8xf32> {
++    %0 = vector.outerproduct %arg0, %arg1, %arg2 {kind = #vector.kind<add>} : vector<2xf32>, vector<8xf32>
++    return %0 : vector<2x8xf32>
++}
++
++module attributes {transform.with_named_sequence} {
++  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
++      %f = transform.structured.match ops{["func.func"]} in %arg1 
++        : (!transform.any_op) -> !transform.any_op
++
++      transform.apply_patterns to %f {
++        transform.apply_patterns.vector.lower_outerproduct enableSVE = true
++      } : !transform.any_op
++    transform.yield
++  }
++}
+\ No newline at end of file
+diff --git a/mlir/test/Dialect/Vector/vector-outerproduct-lowering-transforms.mlir b/mlir/test/Dialect/Vector/vector-outerproduct-lowering-transforms.mlir
+index 059d955f7731..e5b600f54c0d 100644
+--- a/mlir/test/Dialect/Vector/vector-outerproduct-lowering-transforms.mlir
++++ b/mlir/test/Dialect/Vector/vector-outerproduct-lowering-transforms.mlir
+@@ -26,13 +26,13 @@ func.func @outerproduct_noacc(%arg0: vector<2xf32>,
+ // CHECK-SAME: %[[C:.*2]]: vector<2x3xf32>
+ // CHECK:      %[[C0:.*]] = arith.constant dense<0.000000e+00> : vector<2x3xf32>
+ // CHECK:      %[[T0:.*]] = vector.extract %[[A]][0] : f32 from vector<2xf32>
+-// CHECK:      %[[T1:.*]] = vector.splat %[[T0]] : vector<3xf32>
+ // CHECK:      %[[T2:.*]] = vector.extract %[[C]][0] : vector<3xf32> from vector<2x3xf32>
++// CHECK:      %[[T1:.*]] = vector.splat %[[T0]] : vector<3xf32>
+ // CHECK:      %[[T3:.*]] = vector.fma %[[T1]], %[[B]], %[[T2]] : vector<3xf32>
+ // CHECK:      %[[T4:.*]] = vector.insert %[[T3]], %[[C0]] [0] : vector<3xf32> into vector<2x3xf32>
+ // CHECK:      %[[T5:.*]] = vector.extract %[[A]][1] : f32 from vector<2xf32>
+-// CHECK:      %[[T6:.*]] = vector.splat %[[T5]] : vector<3xf32>
+ // CHECK:      %[[T7:.*]] = vector.extract %[[C]][1] : vector<3xf32> from vector<2x3xf32>
++// CHECK:      %[[T6:.*]] = vector.splat %[[T5]] : vector<3xf32>
+ // CHECK:      %[[T8:.*]] = vector.fma %[[T6]], %[[B]], %[[T7]] : vector<3xf32>
+ // CHECK:      %[[T9:.*]] = vector.insert %[[T8]], %[[T4]] [1] : vector<3xf32> into vector<2x3xf32>
+ // CHECK:      return %[[T9]] : vector<2x3xf32>
+@@ -69,14 +69,14 @@ func.func @outerproduct_noacc_int(%arg0: vector<2xi32>,
+ // CHECK-SAME: %[[C:.*2]]: vector<2x3xi32>
+ // CHECK:      %[[C0:.*]] = arith.constant dense<0> : vector<2x3xi32>
+ // CHECK:      %[[T0:.*]] = vector.extract %[[A]][0] : i32 from vector<2xi32>
+-// CHECK:      %[[T1:.*]] = vector.splat %[[T0]] : vector<3xi32>
+ // CHECK:      %[[T2:.*]] = vector.extract %[[C]][0] : vector<3xi32> from vector<2x3xi32>
++// CHECK:      %[[T1:.*]] = vector.splat %[[T0]] : vector<3xi32>
+ // CHECK:      %[[T3:.*]] = arith.muli %[[T1]], %[[B]] : vector<3xi32>
+ // CHECK:      %[[T4:.*]] = arith.addi %[[T3]], %[[T2]] : vector<3xi32>
+ // CHECK:      %[[T5:.*]] = vector.insert %[[T4]], %[[C0]] [0] : vector<3xi32> into vector<2x3xi32>
+ // CHECK:      %[[T6:.*]] = vector.extract %[[A]][1] : i32 from vector<2xi32>
+-// CHECK:      %[[T7:.*]] = vector.splat %[[T6]] : vector<3xi32>
+ // CHECK:      %[[T8:.*]] = vector.extract %[[C]][1] : vector<3xi32> from vector<2x3xi32>
++// CHECK:      %[[T7:.*]] = vector.splat %[[T6]] : vector<3xi32>
+ // CHECK:      %[[T9:.*]] = arith.muli %[[T7]], %[[B]] : vector<3xi32>
+ // CHECK:      %[[T10:.*]] = arith.addi %[[T9]], %[[T8]] : vector<3xi32>
+ // CHECK:      %[[T11:.*]] = vector.insert %[[T10]], %[[T5]] [1] : vector<3xi32> into vector<2x3xi32>
+-- 
+Gitee
+
