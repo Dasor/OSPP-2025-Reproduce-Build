@@ -1,0 +1,50 @@
+From d53fab89ffb65b01f42a9961a9ef4250f39fb26d Mon Sep 17 00:00:00 2001
+From: Daniel <danielantonio.martinezs@um.es>
+Date: Tue, 26 Aug 2025 10:37:45 +0200
+Subject: [PATCH] [mlir] [linalg] fix side effect of linalg op
+
+---
+ .../Dialect/Linalg/IR/LinalgStructuredOps.td    |  1 +
+ mlir/test/Dialect/Linalg/canonicalize.mlir      | 17 +++++++++++++++++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/mlir/include/mlir/Dialect/Linalg/IR/LinalgStructuredOps.td b/mlir/include/mlir/Dialect/Linalg/IR/LinalgStructuredOps.td
+index ac61117c3d6e..4353c2badf94 100644
+--- a/mlir/include/mlir/Dialect/Linalg/IR/LinalgStructuredOps.td
++++ b/mlir/include/mlir/Dialect/Linalg/IR/LinalgStructuredOps.td
+@@ -29,6 +29,7 @@ class LinalgStructuredBase_Op<string mnemonic, list<Trait> props>
+   : Op<Linalg_Dialect, mnemonic, !listconcat([
+        SingleBlockImplicitTerminator<"YieldOp">,
+        DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
++       RecursiveMemoryEffects,
+        DestinationStyleOpInterface,
+        LinalgStructuredInterface,
+        ReifyRankedShapedTypeOpInterface], props)> {
+diff --git a/mlir/test/Dialect/Linalg/canonicalize.mlir b/mlir/test/Dialect/Linalg/canonicalize.mlir
+index d34bc8c1c54f..42da5d5c7143 100644
+--- a/mlir/test/Dialect/Linalg/canonicalize.mlir
++++ b/mlir/test/Dialect/Linalg/canonicalize.mlir
+@@ -1169,3 +1169,20 @@ func.func @broadcast_transpose_fold_2dim(%input: tensor<2xf32>,
+       permutation = [1, 0]
+   func.return %transpose : tensor<4x2xf32>
+ }
++
++// -----
++
++// This test checks linalg op has a recursive memory effect. Otherwise
++// linalg.map without a user would be DCEd.
++func.func @recursive_effect(%arg : tensor<1xf32>) {
++  %init = arith.constant dense<0.0> : tensor<1xf32>
++  %mapped = linalg.map ins(%arg:tensor<1xf32>) outs(%init :tensor<1xf32>)
++            (%in : f32) {
++              vector.print %in : f32
++              linalg.yield %in : f32
++            }
++  func.return
++}
++
++// CHECK-LABEL: @recursive_effect
++//       CHECK: linalg.map
+-- 
+Gitee
+

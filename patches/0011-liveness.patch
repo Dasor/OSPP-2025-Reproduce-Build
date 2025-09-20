@@ -1,0 +1,60 @@
+From f9c5caf066dbd63b9b8c54a2b1df6a2d8b1e7bf6 Mon Sep 17 00:00:00 2001
+From: Daniel <danielantonio.martinezs@um.es>
+Date: Sat, 20 Sep 2025 17:02:20 +0800
+Subject: [PATCH] liveness
+
+---
+ .../Analysis/DataFlow/LivenessAnalysis.cpp    |  2 +-
+ mlir/test/Transforms/remove-dead-values.mlir  | 26 +++++++++++++++++++
+ 2 files changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/mlir/lib/Analysis/DataFlow/LivenessAnalysis.cpp b/mlir/lib/Analysis/DataFlow/LivenessAnalysis.cpp
+index 7875fa9d43d9..e99fd8f9b9e1 100644
+--- a/mlir/lib/Analysis/DataFlow/LivenessAnalysis.cpp
++++ b/mlir/lib/Analysis/DataFlow/LivenessAnalysis.cpp
+@@ -72,7 +72,7 @@ void LivenessAnalysis::visitOperation(Operation *op,
+                                       ArrayRef<Liveness *> operands,
+                                       ArrayRef<const Liveness *> results) {
+   // This marks values of type (1.a) liveness as "live".
+-  if (!isMemoryEffectFree(op)) {
++  if (!isMemoryEffectFree(op) || op->hasTrait<OpTrait::ReturnLike>()) {
+     for (auto *operand : operands)
+       propagateIfChanged(operand, operand->markLive());
+   }
+diff --git a/mlir/test/Transforms/remove-dead-values.mlir b/mlir/test/Transforms/remove-dead-values.mlir
+index fe7bcbc7c490..b0a68f304253 100644
+--- a/mlir/test/Transforms/remove-dead-values.mlir
++++ b/mlir/test/Transforms/remove-dead-values.mlir
+@@ -437,3 +437,29 @@ func.func private @no_block_func_declaration() -> ()
+ 
+ // CHECK: llvm.func @no_block_external_func()
+ llvm.func @no_block_external_func() attributes {sym_visibility = "private"}
++
++// -----
++
++// Check that yielded values aren't incorrectly removed in linalg regions
++module {
++  func.func @linalg_red_add(%arg0: tensor<?xf32>, %arg1: tensor<1xf32>) -> tensor<1xf32> {
++    %0 = linalg.generic {
++      indexing_maps = [affine_map<(d0) -> (d0)>, affine_map<(d0) -> (0)>],
++      iterator_types = ["reduction"]
++    } ins(%arg0 : tensor<?xf32>) outs(%arg1 : tensor<1xf32>) {
++    ^bb0(%in: f32, %out: f32):
++      %1 = arith.addf %in, %out : f32
++      %2 = arith.subf %1, %out : f32 // this should still be removed
++      linalg.yield %1 : f32
++    } -> tensor<1xf32>
++    return %0 : tensor<1xf32>
++  }
++}
++
++// CHECK-LABEL: func @linalg_red_add
++// CHECK: %[[yield:.*]] = arith.addf %{{.*}}, %{{.*}} : f32
++// CHECK: linalg.yield %[[yield]] : f32
++// CHECK-NOT: arith.subf
++
++
++
+-- 
+2.33.0
+
