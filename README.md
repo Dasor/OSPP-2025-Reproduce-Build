@@ -29,17 +29,17 @@ cd llvm-project
 
 There are many patches that need to be applied they are in the patches dir and should be applied in order here is a table with some information about the patches.
 
-| Patch | Gitee PR                                                         | Upstream PR                                                                                               |   |   |
-|-------|------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|---|---|
-| 0001  | [link](https://gitee.com/openeuler/llvm-project/pulls/236)       | -                                                                                                         |   |   |
-| 0002  | -                                                                | -                                                                                                         |   |   |
-| 0003  | [link](https://gitee.com/openeuler/llvm-project/pulls/243)       | -                                                                                                         |   |   |
-| 0004  | -                                                                | [link](https://github.com/llvm/llvm-project/pull/107005/commits/9e1383f2c3a69d5df5beaef8fff522af0bd389a0) |   |   |
-| 0005  | [link](https://gitee.com/openeuler/llvm-project/pulls/234/files) | -                                                                                                         |   |   |
-| 0006  | [link](https://gitee.com/openeuler/llvm-project/pulls/266)       | Several, see Gitee PR                                                                                     |   |   |
-| 0007  | -                                                                | -                                                                                                         |   |   |
-| 0008  | [link](https://gitee.com/openeuler/llvm-project/pulls/269)       | Several, see Gitee PR                                                                                     |   |   |
-| 0009  | [link](https://gitee.com/openeuler/llvm-project/pulls/280)       |                                                                                                           |   |   |
+| Patch | Gitee PR                                                           | Upstream PR                                                                                               |   |   |
+|-------|--------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|---|---|
+| 0001  | [link](https://gitee.com/openeuler/llvm-project/pulls/236)         | -                                                                                                         |   |   |
+| 0002  | [link](https://gitee.com/openeuler/llvm-project/pulls/288)(merged) | -                                                                                                         |   |   |
+| 0003  | [link](https://gitee.com/openeuler/llvm-project/pulls/243)         | -                                                                                                         |   |   |
+| 0004  | -                                                                  | [link](https://github.com/llvm/llvm-project/pull/107005/commits/9e1383f2c3a69d5df5beaef8fff522af0bd389a0) |   |   |
+| 0005  | [link](https://gitee.com/openeuler/llvm-project/pulls/234/files)   | -                                                                                                         |   |   |
+| 0006  | [link](https://gitee.com/openeuler/llvm-project/pulls/266)         | Several, see Gitee PR                                                                                     |   |   |
+| 0007  | -                                                                  | -                                                                                                         |   |   |
+| 0008  | [link](https://gitee.com/openeuler/llvm-project/pulls/269)         | Several, see Gitee PR                                                                                     |   |   |
+| 0009  | [link](https://gitee.com/openeuler/llvm-project/pulls/280)         |                                                                                                           |   |   |
 
 to apply all patches in order, simply:
 
