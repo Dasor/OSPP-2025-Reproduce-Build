@@ -42,6 +42,7 @@ There are many patches that need to be applied they are in the patches dir and s
 | 0009  | [link](https://gitee.com/openeuler/llvm-project/pulls/280)         |                                                                                                           |   |   |
 | 0010  | [link](https://gitee.com/openeuler/llvm-project/pulls/255)         | [link](https://github.com/llvm/llvm-project/commit/df0d249b6511289f1e8c1389f4fd33d7b4c083fa)              |   |   |
 | 0011  | [link](https://gitee.com/openeuler/llvm-project/pulls/290)         | [link](https://gitee.com/link?target=https%3A%2F%2Fgithub.com%2Fllvm%2Fllvm-project%2Fpull%2F140793)      |   |   |
+| 0012  | [link](https://gitee.com/openeuler/llvm-project/pulls/291)         |                                                                                                           |   |   |
 
 to apply all patches in order, simply:
 

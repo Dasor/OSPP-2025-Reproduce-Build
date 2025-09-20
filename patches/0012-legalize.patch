@@ -1,0 +1,449 @@
+From 3fb960442404d6ce6d34dcf6b23c5e1162668a70 Mon Sep 17 00:00:00 2001
+From: Daniel <danielantonio.martinezs@um.es>
+Date: Sat, 20 Sep 2025 18:22:19 +0800
+Subject: [PATCH] legalize
+
+---
+ .../mlir/Dialect/Transform/IR/TransformOps.td |  80 ++---
+ .../lib/Dialect/Transform/IR/TransformOps.cpp | 317 ++++++++++++++++++
+ 2 files changed, 344 insertions(+), 53 deletions(-)
+
+diff --git a/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td b/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td
+index 5caa0932c73e..54ea07321803 100644
+--- a/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td
++++ b/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td
+@@ -768,6 +768,33 @@ def GetProducerOfOperand : TransformDialectOp<"get_producer_of_operand",
+                        "functional-type(operands, results)";
+ }
+ 
++def LegalizeOp : TransformDialectOp<"legalize",
++    [DeclareOpInterfaceMethods<TransformOpInterface>,
++     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
++  let description = [{Legalizes vector sizes to multiples of accepted vector
++  length thanks to unrolling.}];
++
++  let arguments = (ins DefaultValuedAttr<I64Attr, "128">:$hardware_vector_length,
++                       DefaultValuedAttr<I64Attr, "1">:$vscale);
++
++  let assemblyFormat = "attr-dict";
++
++  let extraClassDeclaration = [{
++    static std::optional<SmallVector<int64_t>> getShape(mlir::Operation *op,
++                                                           unsigned hardwareVectorLength,
++                                                           unsigned vscale);
++    static int64_t getMaxUnrollingFactor(unsigned vectorSize,
++                                         unsigned dataBitSize,
++                                         unsigned hardwareVectorLength);
++    static SmallVector<int64_t> getAllDimsMaxUnrollingFactor(ArrayRef<int64_t> dstShape,
++                                                unsigned elementSize,
++                                                unsigned hardwareVectorLength,
++                                                unsigned vscale);
++  }];
++}
++
++
++
+ def GetOperandOp : TransformDialectOp<"get_operand",
+     [DeclareOpInterfaceMethods<TransformOpInterface>,
+      NavigationTransformOpTrait, MatchOpInterface, MemoryEffectsOpInterface]> {
+@@ -1379,57 +1406,4 @@ def YieldOp : TransformDialectOp<"yield",
+   ];
+ }
+ 
+-def LowerToArmSMEOp : TransformDialectOp<"lower_to_arm_sme",
+-    [FunctionalStyleTransformOpTrait,
+-     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+-     TransformOpInterface, TransformEachOpTrait]> {
+-  let description = [{Apply a list of passes to lower supported ops to
+-  legalized arm_sme dialect ops and types.}];
+-
+-  let arguments =
+-    (ins TransformHandleTypeInterface:$target,
+-     DefaultValuedAttr<BoolAttr, "false">:$fuse_outer_products
+-    );
+-
+-  let assemblyFormat = "$target attr-dict `:` type($target)";
+-
+-  let extraClassDeclaration = [{
+-    ::mlir::DiagnosedSilenceableFailure applyToOne(
+-        ::mlir::transform::TransformRewriter &rewriter,
+-        ::mlir::ModuleOp target,
+-        ::mlir::transform::ApplyToEachResultList &results,
+-        ::mlir::transform::TransformState &state);
+-  }];
+-}
+-
+-def LowerToLLVMNewOp : TransformDialectOp<"lower_to_llvm_new",
+-    [FunctionalStyleTransformOpTrait,
+-     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+-     TransformOpInterface, TransformEachOpTrait]> {
+-  let description = [{Indicates that the entire module should be converted
+-  to the LLVM dialect. This is expected to be the last transformation in
+-  a sequence.}];
+-
+-  let arguments =
+-    (ins TransformHandleTypeInterface:$target,
+-     DefaultValuedAttr<BoolAttr, "false">:$reassociate_fp_reductions,
+-     DefaultValuedAttr<BoolAttr, "false">:$enable_index_optimizations,
+-     DefaultValuedAttr<BoolAttr, "false">:$enable_arm_neon,
+-     DefaultValuedAttr<BoolAttr, "false">:$enable_arm_sve,
+-     DefaultValuedAttr<BoolAttr, "false">:$enable_amx,
+-     DefaultValuedAttr<BoolAttr, "false">:$enable_x86vector,
+-     DefaultValuedAttr<BoolAttr, "false">:$enable_async,
+-     DefaultValuedAttr<I64Attr, "1">:$vscale_range);
+-
+-  let assemblyFormat = "$target attr-dict `:` type($target)";
+-
+-  let extraClassDeclaration = [{
+-    ::mlir::DiagnosedSilenceableFailure applyToOne(
+-        ::mlir::transform::TransformRewriter &rewriter,
+-        ::mlir::ModuleOp target,
+-        ::mlir::transform::ApplyToEachResultList &results,
+-        ::mlir::transform::TransformState &state);
+-  }];
+-}
+-
+ #endif // MLIR_DIALECT_TRANSFORM_IR_TRANSFORMOPS
+diff --git a/mlir/lib/Dialect/Transform/IR/TransformOps.cpp b/mlir/lib/Dialect/Transform/IR/TransformOps.cpp
+index ba06950ea225..5e4294a5ab94 100644
+--- a/mlir/lib/Dialect/Transform/IR/TransformOps.cpp
++++ b/mlir/lib/Dialect/Transform/IR/TransformOps.cpp
+@@ -11,11 +11,14 @@
+ #include "mlir/Conversion/ConvertToLLVM/ToLLVMInterface.h"
+ #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
+ #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
++#include "mlir/Dialect/SCF/IR/SCF.h"
+ #include "mlir/Dialect/Transform/IR/TransformAttrs.h"
+ #include "mlir/Dialect/Transform/IR/TransformDialect.h"
+ #include "mlir/Dialect/Transform/IR/TransformTypes.h"
+ #include "mlir/Dialect/Transform/Interfaces/MatchInterfaces.h"
+ #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
++#include "mlir/Dialect/Utils/IndexingUtils.h"
++#include "mlir/Dialect/Vector/IR/VectorOps.h"
+ #include "mlir/Dialect/ArmSME/IR/ArmSME.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/Diagnostics.h"
+@@ -2866,6 +2869,320 @@ void transform::YieldOp::getEffects(
+   onlyReadsHandle(getOperandsMutable(), effects);
+ }
+ 
++
++
++//===---------------------------------------------------------------------===//
++// LegalizeOp
++//===---------------------------------------------------------------------===//
++
++struct CleanupExtractSlice
++    : public OpRewritePattern<mlir::vector::ExtractStridedSliceOp> {
++  using OpRewritePattern<mlir::vector::ExtractStridedSliceOp>::OpRewritePattern;
++
++  // Matches patterns like:
++  // %v = vector.transfer_read %mem[x,y] : memref<12x8xf32> -> vector<1x4xf32>
++  // %e = vector.extract_strided_slice %v {offsets=[0,z] , size=[1x2], strides =
++  // [1,1] } :
++  //                                                    vector<1x4xf32> to
++  //                                                    vector<1x2xf32>
++  // To generate:
++  // %e = vector.transfer_read %mem[x,y+z] : memref<12x8xf32> -> vector<1x2xf32>
++  LogicalResult matchAndRewrite(mlir::vector::ExtractStridedSliceOp op,
++                                PatternRewriter &rewriter) const final {
++
++    if (auto source = op.getVector().getDefiningOp()) {
++      if (auto readOp = dyn_cast<mlir::vector::TransferReadOp>(source)) {
++        auto indices = readOp.getIndices();
++        auto newIndices = SmallVector<Value>(indices);
++        auto offsets = SmallVector<int64_t>();
++        op.getOffsets(offsets);
++        auto dimensions =
++            SmallVector<int64_t>(op.getVector().getType().getShape());
++
++        // Only correct if all dimensions but the last one are 1:
++        for (unsigned long i = 0; i < dimensions.size() - 1; i++) {
++          if (dimensions[i] != 1) {
++            return failure();
++          }
++        }
++
++        auto ofs = rewriter.create<arith::ConstantIndexOp>(
++            op.getLoc(), offsets[offsets.size() - 1]);
++        auto addidx = rewriter.create<arith::AddIOp>(
++            op.getLoc(), indices[indices.size() - 1], ofs);
++
++        newIndices[indices.size() - 1] = addidx;
++        auto newVectType = cast<VectorType>(op.getResult().getType());
++        auto newReadOp = rewriter.create<mlir::vector::TransferReadOp>(
++            readOp.getLoc(), newVectType, readOp.getSource(), newIndices,
++            readOp.getPermutationMap(), readOp.getPadding(), readOp.getMask(),
++            readOp.getInBounds());
++        rewriter.replaceOp(op, newReadOp.getResult());
++        return success();
++      }
++    }
++
++    return failure();
++  }
++};
++
++// On an scf ForOp, whose iteration arguments are accessed and written
++// with various Extract(resp. Insert) strided slices with different
++// offsets (typically after a populateVectorUnrollPatterns call such as
++// legalization). ForOpVectorPropagate hoists reads and write and generates new
++// iteration arguments. eg : %0 = scf.for %arg1 = %c0 to %c64 step %c1
++// iter_args(%arg0 = %a) -> (vector<4x8xf32>) {
++//   %ext1 = vector.extract_strided_slice %arg0 {
++//   offsets = [0, 0], sizes = [4, 4], strides = [1, 1]} : vector<4x8xf32> to
++//   vector<4x4xf32> %ext2 = vector.extract_strided_slice %arg0 { offsets = [0,
++//   4], sizes = [4, 4], strides = [1, 1]} : vector<4x8xf32> to vector<4x4xf32>
++//   %comput1 = arith.mulf %ext1, %ext1: vector<4x4xf32>
++//   %comput2 = arith.mulf %ext2, %ext2: vector<4x4xf32>
++//   %ins1 = vector.insert_strided_slice %comput1, %cst {
++//   offsets = [0, 0], strides = [1, 1]} : vector<4x4xf32> into vector<4x8xf32>
++//   %ins2 = vector.insert_strided_slice %comput2, %ins1 {
++//   offsets = [0, 4], strides = [1, 1]} : vector<4x4xf32> into vector<4x8xf32>
++//   scf.yield %ins2 : vector<4x8xf32>
++// }
++// Becomes :
++// %1 = vector.transfer_read %a[%c0, %c0], %cst : memref<4x8xf32>,
++// vector<4x4xf32> %2 = vector.transfer_read %a[%c0, %c4], %cst :
++// memref<4x8xf32>, vector<4x4xf32> %3:2 = scf.for %arg6 = %c0 to %c64 step %c1
++// iter_args(%arg0 = %2, %arg1 = %1) ->
++//        (vector<4x4xf32>, vector<4x4xf32>) {
++//     %comput1 = arith.mulf %ext1, %ext1: vector<4x4xf32>
++//     %comput2 = arith.mulf %ext2, %ext2: vector<4x4xf32>
++//     scf.yield %comput1, %comput2 : vector<4x4xf32>, vector<4x4xf32>
++// }
++// vector.transfer_write %3#0, %arg0[%c0, %c0] : memref<4x4xf32>,
++// vector<4x8xf32> vector.transfer_write %3#1, %arg0[%c0, %c4] :
++// memref<4x4xf32>, vector<4x8xf32>
++struct ForOpVectorPropagate : public OpRewritePattern<scf::ForOp> {
++  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
++  std::optional<Value>
++  updateForOpInputOutput(Block &oldBlock, PatternRewriter &rewriter,
++                         unsigned int iterArgTarget,
++                         unsigned int numInductionVars,
++                         vector::InsertStridedSliceOp definingOp) const {
++    std::optional<Value> extraYieldOperand;
++    oldBlock.walk([&](Operation *instr) {
++      // if insertOp targets the vector to be unrolled and has the same
++      // offset as the new unrolled arguments use the new argument as
++      // source.
++      if (auto extractOp =
++              dyn_cast<mlir::vector::ExtractStridedSliceOp>(instr)) {
++        // region iter argument index = forop iterarg index +
++        // numInductionVariables
++        if (extractOp.getVector() ==
++            oldBlock.getArguments()[iterArgTarget + numInductionVars]) {
++          // if 1 to 1 match
++          if (extractOp.getOffsets() == definingOp.getOffsets() &&
++              getI64SubArray(extractOp.getSizes()) ==
++                  llvm::to_vector<4>(
++                      definingOp.getSourceVectorType().getShape())) {
++            oldBlock.addArgument(definingOp.getSource().getType(),
++                                 definingOp.getLoc());
++            extractOp.getResult().replaceAllUsesWith(
++                oldBlock.getArguments().back());
++            rewriter.eraseOp(extractOp);
++          }
++        }
++      } else if (auto insertOp =
++                     dyn_cast<mlir::vector::InsertStridedSliceOp>(instr)) {
++        if (oldBlock.getTerminator()->getOperands()[iterArgTarget] ==
++            insertOp.getResult()) {
++          if (insertOp.getOffsets() == definingOp.getOffsets() &&
++              insertOp.getSourceVectorType().getShape() ==
++                  definingOp.getSourceVectorType().getShape()) {
++            insertOp.getResult().replaceAllUsesWith(insertOp.getDest());
++            extraYieldOperand = insertOp.getSource();
++            rewriter.eraseOp(insertOp);
++          }
++        }
++      }
++    });
++    return extraYieldOperand;
++  }
++
++  LogicalResult matchAndRewrite(scf::ForOp forOp,
++                                PatternRewriter &rewriter) const final {
++    if (!forOp.getInitArgs().size())
++      return failure();
++
++    mlir::vector::InsertStridedSliceOp insertOp = {};
++    SmallVector<Value> newIterOperands = forOp.getInits();
++    auto loc = forOp.getLoc();
++    Block &oldBlock = forOp.getRegion().front();
++    unsigned int iterOperandId = 0;
++    for (; iterOperandId < forOp.getInitArgs().size(); iterOperandId++) {
++      insertOp = forOp.getInits()[iterOperandId]
++                     .getDefiningOp<mlir::vector::InsertStridedSliceOp>();
++      if (insertOp) {
++        // update original iter argument
++        newIterOperands[iterOperandId] = insertOp.getDest();
++        // add new unrolled one
++        newIterOperands.push_back(insertOp.getSource());
++        break;
++      }
++    }
++    if (!insertOp) {
++      return failure();
++    }
++
++    std::optional<Value> extraYieldOperands =
++        updateForOpInputOutput(oldBlock, rewriter, iterOperandId,
++                               forOp.getNumInductionVars(), insertOp);
++    if (!extraYieldOperands) {
++      return failure();
++    }
++
++    scf::ForOp newForOp = rewriter.create<scf::ForOp>(
++        loc, forOp.getLowerBound(), forOp.getUpperBound(), forOp.getStep(),
++        newIterOperands);
++
++    Block &newBlock = newForOp.getRegion().front();
++    SmallVector<Value, 4> newBlockTransferArgs(newBlock.getArguments().begin(),
++                                               newBlock.getArguments().end());
++    rewriter.mergeBlocks(&oldBlock, &newBlock, newBlockTransferArgs);
++    auto clonedYieldOp = cast<scf::YieldOp>(newBlock.getTerminator());
++    SmallVector<Value> newYieldOperands = clonedYieldOp.getOperands();
++    newYieldOperands.push_back(extraYieldOperands.value());
++    rewriter.setInsertionPoint(clonedYieldOp);
++    rewriter.create<scf::YieldOp>(newForOp.getLoc(), newYieldOperands);
++    rewriter.eraseOp(clonedYieldOp);
++
++    forOp.getResult(iterOperandId)
++        .replaceAllUsesWith(newForOp.getResult(iterOperandId));
++
++    SmallVector<Value, 4> newResults;
++    for (unsigned i = 0; i < forOp.getNumResults(); i++) {
++      newResults.push_back(newForOp.getResult(i));
++    }
++    rewriter.replaceOp(forOp, newResults);
++    // insert the extra yielded element into the original argument for later
++    // optimisations.
++    rewriter.setInsertionPointAfter(newForOp);
++    auto insert = rewriter.create<vector::InsertStridedSliceOp>(
++        loc, newForOp->getResults().back(), newForOp->getResult(iterOperandId),
++        insertOp.getOffsets(), insertOp.getStrides());
++    newForOp.getResult(iterOperandId)
++        .replaceAllUsesExcept(insert.getResult(), insert);
++    return success();
++  }
++};
++
++// Finds the biggest unrolling factor fitting in the register and dividing
++// vectorSize
++int64_t transform::LegalizeOp::getMaxUnrollingFactor(
++    unsigned vectorSize, unsigned dataBitSize, unsigned hardwareVectorLength) {
++  if (vectorSize < hardwareVectorLength / dataBitSize)
++    return vectorSize;
++  for (int i = hardwareVectorLength / dataBitSize; i > 1; i /= 2) {
++    if (!(vectorSize % i)) {
++      return i;
++    }
++  }
++  return 1;
++}
++
++SmallVector<int64_t> transform::LegalizeOp::getAllDimsMaxUnrollingFactor(
++    ArrayRef<int64_t> dstShape, unsigned elementSize,
++    unsigned hardwareVectorLength, unsigned vscale) {
++  SmallVector<int64_t> ret;
++  for (size_t dimension = 0; dimension < dstShape.size() - 1; dimension++) {
++    ret.push_back(getMaxUnrollingFactor(dstShape[dimension], elementSize,
++                                        hardwareVectorLength));
++  }
++  // we use vscale * size only on the last dimension as it is the only one
++  // possibly scalable
++  if (dstShape.size() > 0)
++    ret.push_back(getMaxUnrollingFactor(dstShape[dstShape.size() - 1],
++                                        elementSize,
++                                        hardwareVectorLength * vscale));
++  return ret;
++}
++
++// Return the target shape based on op type.
++std::optional<SmallVector<int64_t>>
++transform::LegalizeOp::getShape(Operation *op, unsigned hardwareVectorLength,
++                                unsigned vscale) {
++  if (isa<arith::MulFOp, arith::AddFOp, arith::SelectOp, arith::CmpFOp,
++          vector::TransposeOp, vector::TransferReadOp>(op)) {
++    auto dstVecType = dyn_cast<VectorType>(op->getResult(0).getType());
++    if (!dstVecType)
++      return std::nullopt;
++    auto dstShape = dstVecType.getShape();
++    auto elementSize =
++        mlir::LLVM::getPrimitiveTypeSizeInBits(dstVecType.getElementType());
++    return getAllDimsMaxUnrollingFactor(dstShape, elementSize,
++                                        hardwareVectorLength, vscale);
++  }
++  if (auto contractOp = dyn_cast<vector::ContractionOp>(op)) {
++    auto destType = dyn_cast<VectorType>(contractOp.getType());
++    if (!destType)
++      return std::nullopt;
++    auto maybeShape = contractOp.getShapeForUnroll();
++    if (!maybeShape) {
++      return std::nullopt;
++    }
++    auto elementSize = mlir::LLVM::getPrimitiveTypeSizeInBits(
++        contractOp.getLhsType().getElementType());
++    // we give vscale = 1 as handling of last dim depends on indexing Maps
++    auto unrollingFactor = getAllDimsMaxUnrollingFactor(
++        maybeShape.value(), elementSize, hardwareVectorLength, 1);
++    if (vscale > 1) {
++      // only the last dim of the res is of size vscale * RegSize
++      auto accMap = contractOp.getIndexingMapsArray()[2];
++      auto accLastDimIdx = accMap.getDimPosition(destType.getRank() - 1);
++      unrollingFactor[accLastDimIdx] *= 2;
++    }
++    return unrollingFactor;
++  }
++  if (auto writeOp = dyn_cast<vector::TransferWriteOp>(op)) {
++    auto vecType = cast<VectorType>(writeOp.getVector().getType());
++    auto elementSize =
++        mlir::LLVM::getPrimitiveTypeSizeInBits(vecType.getElementType());
++    return getAllDimsMaxUnrollingFactor(vecType.getShape(), elementSize,
++                                        hardwareVectorLength, vscale);
++  }
++  return std::nullopt;
++}
++
++DiagnosedSilenceableFailure
++transform::LegalizeOp::apply(transform::TransformRewriter &rewriter,
++                             transform::TransformResults &results,
++                             transform::TransformState &state) {
++  MLIRContext *ctx = getContext();
++  RewritePatternSet patterns(ctx);
++  vector::populateVectorUnrollPatterns(
++      patterns, vector::UnrollVectorOptions().setNativeShapeFn(
++                    [this](Operation *op) mutable {
++                      return getShape(op, getHardwareVectorLength(),
++                                      getVscale());
++                    }));
++
++  if (failed(applyPatternsAndFoldGreedily(state.getTopLevel(),
++                                          std::move(patterns)))) {
++    return DiagnosedSilenceableFailure::definiteFailure();
++  }
++
++  RewritePatternSet extra_patterns(ctx);
++  extra_patterns.add<CleanupExtractSlice>(ctx);
++  extra_patterns.add<ForOpVectorPropagate>(ctx);
++  if (failed(applyPatternsAndFoldGreedily(state.getTopLevel(),
++                                          std::move(extra_patterns)))) {
++    return DiagnosedSilenceableFailure::definiteFailure();
++  }
++  return DiagnosedSilenceableFailure::success();
++}
++
++void transform::LegalizeOp::getEffects(
++    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
++  // Not sure what effects should be declared since the
++  // IREE code did not have to implement the getEffects function
++  transform::modifiesPayload(effects);
++}
++
+ //===----------------------------------------------------------------------===//
+ // LowerToArmSMEOp
+ //===----------------------------------------------------------------------===//
+-- 
+2.33.0
+
