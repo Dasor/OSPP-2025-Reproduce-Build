@@ -1,19 +1,19 @@
-From 3fb960442404d6ce6d34dcf6b23c5e1162668a70 Mon Sep 17 00:00:00 2001
+From ada1eebf35b44efb04eea47331ee17321dab045a Mon Sep 17 00:00:00 2001
 From: Daniel <danielantonio.martinezs@um.es>
-Date: Sat, 20 Sep 2025 18:22:19 +0800
+Date: Mon, 22 Sep 2025 15:09:37 +0800
 Subject: [PATCH] legalize
 
 ---
- .../mlir/Dialect/Transform/IR/TransformOps.td |  80 ++---
- .../lib/Dialect/Transform/IR/TransformOps.cpp | 317 ++++++++++++++++++
- 2 files changed, 344 insertions(+), 53 deletions(-)
+ .../mlir/Dialect/Transform/IR/TransformOps.td |  25 ++
+ .../lib/Dialect/Transform/IR/TransformOps.cpp | 316 ++++++++++++++++++
+ 2 files changed, 341 insertions(+)
 
 diff --git a/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td b/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td
-index 5caa0932c73e..54ea07321803 100644
+index 5caa0932c73e..2e69a6586f73 100644
 --- a/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td
 +++ b/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td
-@@ -768,6 +768,33 @@ def GetProducerOfOperand : TransformDialectOp<"get_producer_of_operand",
-                        "functional-type(operands, results)";
+@@ -1432,4 +1432,29 @@ def LowerToLLVMNewOp : TransformDialectOp<"lower_to_llvm_new",
+   }];
  }
  
 +def LegalizeOp : TransformDialectOp<"legalize",
@@ -41,71 +41,9 @@ index 5caa0932c73e..54ea07321803 100644
 +  }];
 +}
 +
-+
-+
- def GetOperandOp : TransformDialectOp<"get_operand",
-     [DeclareOpInterfaceMethods<TransformOpInterface>,
-      NavigationTransformOpTrait, MatchOpInterface, MemoryEffectsOpInterface]> {
-@@ -1379,57 +1406,4 @@ def YieldOp : TransformDialectOp<"yield",
-   ];
- }
- 
--def LowerToArmSMEOp : TransformDialectOp<"lower_to_arm_sme",
--    [FunctionalStyleTransformOpTrait,
--     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
--     TransformOpInterface, TransformEachOpTrait]> {
--  let description = [{Apply a list of passes to lower supported ops to
--  legalized arm_sme dialect ops and types.}];
--
--  let arguments =
--    (ins TransformHandleTypeInterface:$target,
--     DefaultValuedAttr<BoolAttr, "false">:$fuse_outer_products
--    );
--
--  let assemblyFormat = "$target attr-dict `:` type($target)";
--
--  let extraClassDeclaration = [{
--    ::mlir::DiagnosedSilenceableFailure applyToOne(
--        ::mlir::transform::TransformRewriter &rewriter,
--        ::mlir::ModuleOp target,
--        ::mlir::transform::ApplyToEachResultList &results,
--        ::mlir::transform::TransformState &state);
--  }];
--}
--
--def LowerToLLVMNewOp : TransformDialectOp<"lower_to_llvm_new",
--    [FunctionalStyleTransformOpTrait,
--     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
--     TransformOpInterface, TransformEachOpTrait]> {
--  let description = [{Indicates that the entire module should be converted
--  to the LLVM dialect. This is expected to be the last transformation in
--  a sequence.}];
--
--  let arguments =
--    (ins TransformHandleTypeInterface:$target,
--     DefaultValuedAttr<BoolAttr, "false">:$reassociate_fp_reductions,
--     DefaultValuedAttr<BoolAttr, "false">:$enable_index_optimizations,
--     DefaultValuedAttr<BoolAttr, "false">:$enable_arm_neon,
--     DefaultValuedAttr<BoolAttr, "false">:$enable_arm_sve,
--     DefaultValuedAttr<BoolAttr, "false">:$enable_amx,
--     DefaultValuedAttr<BoolAttr, "false">:$enable_x86vector,
--     DefaultValuedAttr<BoolAttr, "false">:$enable_async,
--     DefaultValuedAttr<I64Attr, "1">:$vscale_range);
--
--  let assemblyFormat = "$target attr-dict `:` type($target)";
--
--  let extraClassDeclaration = [{
--    ::mlir::DiagnosedSilenceableFailure applyToOne(
--        ::mlir::transform::TransformRewriter &rewriter,
--        ::mlir::ModuleOp target,
--        ::mlir::transform::ApplyToEachResultList &results,
--        ::mlir::transform::TransformState &state);
--  }];
--}
--
  #endif // MLIR_DIALECT_TRANSFORM_IR_TRANSFORMOPS
 diff --git a/mlir/lib/Dialect/Transform/IR/TransformOps.cpp b/mlir/lib/Dialect/Transform/IR/TransformOps.cpp
-index ba06950ea225..5e4294a5ab94 100644
+index ba06950ea225..92b8edd062eb 100644
 --- a/mlir/lib/Dialect/Transform/IR/TransformOps.cpp
 +++ b/mlir/lib/Dialect/Transform/IR/TransformOps.cpp
 @@ -11,11 +11,14 @@
@@ -123,10 +61,11 @@ index ba06950ea225..5e4294a5ab94 100644
  #include "mlir/Dialect/ArmSME/IR/ArmSME.h"
  #include "mlir/IR/BuiltinAttributes.h"
  #include "mlir/IR/Diagnostics.h"
-@@ -2866,6 +2869,320 @@ void transform::YieldOp::getEffects(
-   onlyReadsHandle(getOperandsMutable(), effects);
- }
- 
+@@ -2992,4 +2995,317 @@ void transform::LowerToLLVMNewOp::getEffects(
+     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+   transform::modifiesPayload(effects);
+   transform::onlyReadsHandle(getTargetMutable(), effects);
++}
 +
 +
 +//===---------------------------------------------------------------------===//
@@ -439,11 +378,8 @@ index ba06950ea225..5e4294a5ab94 100644
 +  // Not sure what effects should be declared since the
 +  // IREE code did not have to implement the getEffects function
 +  transform::modifiesPayload(effects);
-+}
-+
- //===----------------------------------------------------------------------===//
- // LowerToArmSMEOp
- //===----------------------------------------------------------------------===//
+ }
+\ No newline at end of file
 -- 
 2.33.0
 
