@@ -1,0 +1,384 @@
+From bc191a261349a1cd2874d752d11c4a6c3fb5c253 Mon Sep 17 00:00:00 2001
+From: Daniel <danielantonio.martinezs@um.es>
+Date: Mon, 22 Sep 2025 21:06:49 +0800
+Subject: [PATCH] hoisting
+
+---
+ .../Linalg/TransformOps/LinalgTransformOps.td |  75 ++++++++++
+ .../mlir/Dialect/Linalg/Transforms/Hoisting.h |   1 +
+ .../TransformOps/LinalgTransformOps.cpp       |  29 ++++
+ .../Dialect/Linalg/Transforms/Hoisting.cpp    | 128 ++++++++++++++++++
+ mlir/test/Dialect/Linalg/hoisting-cast.mlir   |  84 ++++++++++++
+ 5 files changed, 317 insertions(+)
+ create mode 100644 mlir/test/Dialect/Linalg/hoisting-cast.mlir
+
+diff --git a/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td b/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td
+index ecc86999006d..1666a6265ef3 100644
+--- a/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td
++++ b/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td
+@@ -2331,6 +2331,81 @@ def HoistRedundantVectorBroadcastsOp :
+    }];
+ }
+ 
++//===----------------------------------------------------------------------===//
++// HoistRedundantVectorShapeCastsOp
++//===----------------------------------------------------------------------===//
++
++def HoistRedundantVectorShapeCastsOp :
++  Op<Transform_Dialect, "structured.hoist_redundant_vector_shape_casts",
++    [FunctionalStyleTransformOpTrait, MemoryEffectsOpInterface,
++     TransformEachOpTrait, TransformOpInterface,
++     ReportTrackingListenerFailuresOpTrait]> {
++  let description = [{
++    Hoist vector.shape_casts out of immediately
++    enclosing scf::ForOp iteratively.
++
++    #### Return modes:
++
++    The operation always succeeds and returns a handle to the transformed
++    function op.
++  }];
++
++  let arguments = (ins TransformHandleTypeInterface:$target);
++  let results = (outs TransformHandleTypeInterface:$transformed);
++
++  let assemblyFormat = "$target attr-dict `:` functional-type(operands, results) ";
++
++  let builders = [
++    OpBuilder<(ins "Value":$target)>,
++  ];
++  let extraClassDeclaration = [{
++    ::mlir::DiagnosedSilenceableFailure applyToOne(
++         ::mlir::transform::TransformRewriter &rewriter,
++         ::mlir::func::FuncOp target,
++         ::mlir::transform::ApplyToEachResultList &results,
++         ::mlir::transform::TransformState &state);
++   }];
++}
++
++
++//===----------------------------------------------------------------------===//
++// HoistRedundantVectorCastsOp
++//===----------------------------------------------------------------------===//
++
++def HoistRedundantVectorCastsOp :
++  Op<Transform_Dialect, "structured.hoist_redundant_vector_casts",
++    [FunctionalStyleTransformOpTrait, MemoryEffectsOpInterface,
++     TransformEachOpTrait, TransformOpInterface,
++     ReportTrackingListenerFailuresOpTrait]> {
++  let description = [{
++    Hoist out vector.shape_cast operations whose operands are iter_args of a
++    loop.
++
++    #### Return modes:
++
++    The operation always succeeds and returns a handle to the transformed
++    function op.
++  }];
++
++  let arguments = (ins TransformHandleTypeInterface:$target);
++  let results = (outs TransformHandleTypeInterface:$transformed);
++
++  let assemblyFormat = "$target attr-dict `:` functional-type(operands, results) ";
++
++  let builders = [
++    OpBuilder<(ins "Value":$target)>,
++  ];
++  let extraClassDeclaration = [{
++    ::mlir::DiagnosedSilenceableFailure applyToOne(
++         ::mlir::transform::TransformRewriter &rewriter,
++         ::mlir::Operation *target,
++         ::mlir::transform::ApplyToEachResultList &results,
++         ::mlir::transform::TransformState &state);
++   }];
++}
++
++
++
+ //===----------------------------------------------------------------------===//
+ // ConvertConv2DToImg2ColOp
+ //===----------------------------------------------------------------------===//
+diff --git a/mlir/include/mlir/Dialect/Linalg/Transforms/Hoisting.h b/mlir/include/mlir/Dialect/Linalg/Transforms/Hoisting.h
+index 236c2ce7d48e..078a62a64737 100644
+--- a/mlir/include/mlir/Dialect/Linalg/Transforms/Hoisting.h
++++ b/mlir/include/mlir/Dialect/Linalg/Transforms/Hoisting.h
+@@ -42,6 +42,7 @@ namespace linalg {
+ /// WARNING: This hoisting does not model parallelism and is generally incorrect
+ /// when used on distributed loops with memref semantics!
+ void hoistRedundantVectorTransfers(Operation *root);
++void hoistRedundantVectorCasts(Operation *root);
+ 
+ /// Hoist vector.extract/vector.broadcast pairs out of immediately enclosing
+ /// scf::ForOp iteratively, if the following conditions are met:
+diff --git a/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp b/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+index b611347b8de2..15aff425baed 100644
+--- a/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
++++ b/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+@@ -3465,6 +3465,35 @@ transform::HoistRedundantVectorBroadcastsOp::applyToOne(
+   return DiagnosedSilenceableFailure::success();
+ }
+ 
++//===----------------------------------------------------------------------===//
++// HoistRedundantVectorShapeCastsOp
++//===----------------------------------------------------------------------===//
++
++DiagnosedSilenceableFailure
++transform::HoistRedundantVectorShapeCastsOp::applyToOne(
++    transform::TransformRewriter &rewriter, func::FuncOp target,
++    transform::ApplyToEachResultList &results,
++    transform::TransformState &state) {
++  linalg::hoistRedundantVectorCasts(target);
++  results.push_back(target);
++  return DiagnosedSilenceableFailure::success();
++}
++
++
++//===----------------------------------------------------------------------===//
++// HoistRedundantVectorCastsOp
++//===----------------------------------------------------------------------===//
++
++DiagnosedSilenceableFailure transform::HoistRedundantVectorCastsOp::applyToOne(
++    transform::TransformRewriter &rewriter, Operation *target,
++    transform::ApplyToEachResultList &results,
++    transform::TransformState &state) {
++  linalg::hoistRedundantVectorCasts(target);
++  results.push_back(target);
++  return DiagnosedSilenceableFailure::success();
++}
++
++
+ //===----------------------------------------------------------------------===//
+ // ConvertConv2DToImg2ColOp.
+ //===----------------------------------------------------------------------===//
+diff --git a/mlir/lib/Dialect/Linalg/Transforms/Hoisting.cpp b/mlir/lib/Dialect/Linalg/Transforms/Hoisting.cpp
+index 94f6b6029875..fa5885299a45 100644
+--- a/mlir/lib/Dialect/Linalg/Transforms/Hoisting.cpp
++++ b/mlir/lib/Dialect/Linalg/Transforms/Hoisting.cpp
+@@ -199,6 +199,134 @@ static bool noAliasingUseInLoop(vector::TransferReadOp transferRead,
+   return true;
+ }
+ 
++// Hoist out vector.shape_cast operations whose operands are iter_args of a
++// loop. This function transforms something like this:
++//  %loop = scf.for _ = _ to _ step _ iter_args(%iterarg = %v) -> (t1) {
++//   %c = vector.shape_cast %iterarg : t1 to t2
++//   (... do something with %c ...)
++//   scf.yield %something : t1
++// }
++// into the following:
++//  %c = vector.shape_cast %v: t1 to t2
++//  %loop = scf.for _ = _ to _ step _ iter_args(%iterarg = %c) -> (t2) {
++//  (... do something with %iterarg ...)
++//   %something_cast = vector.shape_cast %something : t1 to t2
++//   scf.yield %something_cast : t2
++// }
++// %loop_cast = vector.shape_cast %loop : t1 to t2
++// This transformation is most useful when the generated casts can be
++// canonicalized away.
++void mlir::linalg::hoistRedundantVectorCasts(Operation *root) {
++  bool changed = true;
++  while (changed) {
++    changed = false;
++    // First move loop invariant ops outside of their loop. This needs to be
++    // done before as we cannot move ops without interrupting the function walk.
++    root->walk(
++        [&](LoopLikeOpInterface loopLike) { moveLoopInvariantCode(loopLike); });
++
++    root->walk([&](scf::ForOp loop) {
++      auto iterArgs = loop.getRegionIterArgs();
++      for (auto iArg : iterArgs) {
++        // If the iter_arg does not have only one use, it won't be possible to
++        // hoist it out.
++        if (!iArg.hasOneUse()) {
++          return WalkResult::advance();
++        }
++        auto user = *iArg.getUsers().begin();
++        // We can hoist out the iter arg if and only if its user is a shape_cast
++        // operation.
++        if (auto shapeCast = dyn_cast<vector::ShapeCastOp>(*user)) {
++          // If all the dependences of the cast are casts themselves, then we
++          // cannot hoist without risking to create an infinite loop of
++          // hoistings. Give up.
++          auto all_casts =
++              llvm::all_of(shapeCast.getResult().getUsers(), [&](Operation *v) {
++                return isa<vector::ShapeCastOp>(*v);
++              });
++          if (all_casts)
++            return WalkResult::advance();
++
++          Value initArg = loop.getTiedLoopInit(iArg)->get();
++          OpBuilder b(shapeCast);
++
++          // Create a new vector.shape_cast operation outside of the loop
++          auto newShapeCast = b.create<vector::ShapeCastOp>(
++              shapeCast.getLoc(), shapeCast.getType(), initArg);
++          loop.moveOutOfLoop(newShapeCast);
++          b.setInsertionPoint(loop);
++
++          auto index = iArg.getArgNumber() - loop.getNumInductionVars();
++          auto operands = llvm::to_vector(loop.getInits());
++
++          // Create new loop with the hoisted operation as an iter_arg
++          operands[index] = newShapeCast.getResult();
++          scf::ForOp newLoop = b.create<scf::ForOp>(
++              loop.getLoc(), loop.getLowerBound(), loop.getUpperBound(),
++              loop.getStep(), operands,
++              [](OpBuilder &, Location, Value, ValueRange) {});
++
++          Block *loopBody = loop.getBody();
++          Block *newLoopBody = newLoop.getBody();
++
++          // Move the body of the original loop to the new loop.
++          newLoopBody->getOperations().splice(newLoopBody->end(),
++                                              loopBody->getOperations());
++
++          auto yield = cast<scf::YieldOp>(newLoopBody->getTerminator());
++          // Inject a cast before the loop yield to return values of the same
++          // type as the iter_args
++          b.setInsertionPoint(yield);
++          auto yieldCast = b.create<vector::ShapeCastOp>(
++              yield.getLoc(), shapeCast.getType(), yield.getOperand(index));
++          SmallVector<Value> res(yield.getResults());
++          res[index] = yieldCast;
++          yield.getResultsMutable().assign(res);
++
++          // Remap the BlockArguments from the original loop to the new loop
++          // BlockArguments.
++          MutableArrayRef<BlockArgument> bbArgs = loopBody->getArguments();
++          for (auto it :
++               llvm::zip(bbArgs,
++                         newLoopBody->getArguments().take_front(bbArgs.size())))
++            std::get<0>(it).replaceAllUsesWith(std::get<1>(it));
++
++          // Replace all uses of the original loop with corresponding values
++          // from the new loop, and insert a cast when the result corresponds to
++          // the hoisted iter_arg.
++          b.setInsertionPointAfter(newLoop);
++          auto castOp = b.create<vector::ShapeCastOp>(
++              newLoop.getLoc(), newShapeCast.getSource().getType(),
++              newLoop.getResult(index));
++          auto resultToCast = loop.getResult(index);
++          for (auto res : llvm::zip(loop.getResults(), newLoop.getResults())) {
++            std::get<0>(res).replaceUsesWithIf(
++                std::get<1>(res),
++                [&](OpOperand &v) { return v.get() != resultToCast; });
++          }
++          resultToCast.replaceAllUsesWith(castOp);
++
++          // Erase the old loop
++          loop.erase();
++
++          // Update the uses of the hoisted operation and erase it
++          shapeCast.replaceAllUsesWith(newLoop.getRegionIterArgs()[index]);
++          shapeCast.erase();
++
++          changed = true;
++
++          // Need to interrupt and restart because erasing the loop messes up
++          // the walk.
++          return WalkResult::interrupt();
++        }
++      }
++      return WalkResult::advance();
++    });
++  }
++}
++
++
++
+ void mlir::linalg::hoistRedundantVectorTransfers(Operation *root) {
+   bool changed = true;
+   while (changed) {
+diff --git a/mlir/test/Dialect/Linalg/hoisting-cast.mlir b/mlir/test/Dialect/Linalg/hoisting-cast.mlir
+new file mode 100644
+index 000000000000..1aaf6fc758c4
+--- /dev/null
++++ b/mlir/test/Dialect/Linalg/hoisting-cast.mlir
+@@ -0,0 +1,84 @@
++// RUN: mlir-opt -transform-interpreter -canonicalize --split-input-file --allow-unregistered-dialect %s | FileCheck %s
++
++// CHECK-LABEL: func @hoist_vector_casts(
++//  CHECK-SAME:   %[[TENSOR:[a-zA-Z0-9]*]]: tensor<4x4x2xf32>,
++//  CHECK-SAME:   %[[DEFAULT:[a-zA-Z0-9]*]]: f32,
++//  CHECK-SAME:   %[[LB:[a-zA-Z0-9]*]]: index,
++//  CHECK-SAME:   %[[UB:[a-zA-Z0-9]*]]: index,
++//  CHECK-SAME:   %[[STEP:[a-zA-Z0-9]*]]: index
++func.func @hoist_vector_casts(
++    %tensor: tensor<4x4x2xf32>,
++    %default: f32, %lb : index, %ub : index, %step: index) {
++  // CHECK: arith.constant 0 : index
++  // CHECK-NEXT: %[[VECTOR0:.*]] = vector.transfer_read %{{.*}} : tensor<4x4x2xf32>, vector<4x4x2xf32>
++  // CHECK-NEXT: %[[VECTOR1:.*]] = vector.shape_cast %[[VECTOR0]] : vector<4x4x2xf32> to vector<4x8xf32>
++  // CHECK-NEXT: %[[LOOP:.*]] = scf.for {{.*}} iter_args(%[[ARG:.*]] = %[[VECTOR1]]) -> (vector<4x8xf32>) {
++  // CHECK-NEXT: %[[U:.*]] = "some_use"(%[[ARG]]) : (vector<4x8xf32>) -> vector<4x8xf32>
++  // CHECK-NEXT: scf.yield %[[U]] : vector<4x8xf32>
++  // CHECK-NEXT: }
++  // CHECK-NEXT: %[[VECTOR2:.*]] = vector.shape_cast %[[LOOP]] : vector<4x8xf32> to vector<4x4x2xf32>
++  %zero = arith.constant 0 : index
++  %vector = vector.transfer_read %tensor[%zero, %zero, %zero], %default {in_bounds = [true, true, true]} : tensor<4x4x2xf32>, vector<4x4x2xf32>
++  %loop = scf.for %i = %lb to %ub step %step iter_args(%arg = %vector) -> (vector<4x4x2xf32>) {
++    %c = vector.shape_cast %arg : vector<4x4x2xf32> to vector<4x8xf32>
++    %u = "some_use"(%c) : (vector<4x8xf32>) -> vector<4x8xf32>
++    %res = vector.shape_cast %u : vector<4x8xf32> to vector<4x4x2xf32>
++    scf.yield %res: vector<4x4x2xf32>
++  }
++  %u = "some_use"(%loop) : (vector<4x4x2xf32>) -> vector<4x4x2xf32>
++  return
++}
++
++module attributes {transform.with_named_sequence} {
++  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
++    %0 = transform.structured.match ops{["func.func"]} in %arg1
++      : (!transform.any_op) -> !transform.any_op
++    transform.structured.hoist_redundant_vector_shape_casts %0
++      : (!transform.any_op) -> !transform.any_op
++    transform.yield
++  }
++}
++
++// -----
++
++// CHECK-LABEL: func @hoist_vector_casts_multiargs(
++//  CHECK-SAME:   %[[TENSOR:[a-zA-Z0-9]*]]: tensor<4x4x2xf32>,
++//  CHECK-SAME:   %[[DEFAULT:[a-zA-Z0-9]*]]: f32,
++//  CHECK-SAME:   %[[LB:[a-zA-Z0-9]*]]: index,
++//  CHECK-SAME:   %[[UB:[a-zA-Z0-9]*]]: index,
++//  CHECK-SAME:   %[[STEP:[a-zA-Z0-9]*]]: index
++func.func @hoist_vector_casts_multiargs(
++    %tensor: tensor<4x4x2xf32>,
++    %default: f32, %lb : index, %ub : index, %step: index) {
++  // CHECK-NEXT: arith.constant 0 : index
++  // CHECK-NEXT: %[[V0:.*]] = vector.transfer_read %{{.*}} : tensor<4x4x2xf32>, vector<4x4x2xf32>
++  // CHECK-NEXT: %[[V1:.*]] = vector.shape_cast %[[V0]] : vector<4x4x2xf32> to vector<4x8xf32>
++  // CHECK-NEXT: %[[LOOP:.*]]:2 = scf.for {{.*}} iter_args(%[[ARG0:.*]] = %[[V0]], %[[ARG1:.*]] = %[[V1]])
++  // CHECK-NEXT: %[[U0:.*]] = "some_use"(%[[ARG0]]) : (vector<4x4x2xf32>) -> vector<4x4x2xf32>
++  // CHECK-NEXT: %[[U1:.*]] = "some_use"(%[[ARG1]]) : (vector<4x8xf32>) -> vector<4x8xf32>
++  // CHECK-NEXT: scf.yield %[[U0]], %[[U1]] : vector<4x4x2xf32>, vector<4x8xf32>
++  // CHECK-NEXT: }
++  // CHECK-NEXT: %[[RES:.*]] = vector.shape_cast %[[LOOP]]#1 : vector<4x8xf32> to vector<4x4x2xf32>
++  %zero = arith.constant 0 : index
++  %vector = vector.transfer_read %tensor[%zero, %zero, %zero], %default {in_bounds = [true, true, true]} : tensor<4x4x2xf32>, vector<4x4x2xf32>
++  %loop:2 = scf.for %i = %lb to %ub step %step iter_args(%arg0 = %vector, %arg1 = %vector) -> (vector<4x4x2xf32>, vector<4x4x2xf32>) {
++    %c = vector.shape_cast %arg1 : vector<4x4x2xf32> to vector<4x8xf32>
++    %u0 = "some_use"(%arg0) : (vector<4x4x2xf32>) -> vector<4x4x2xf32>
++    %u1 = "some_use"(%c) : (vector<4x8xf32>) -> vector<4x8xf32>
++    %res = vector.shape_cast %u1 : vector<4x8xf32> to vector<4x4x2xf32>
++    scf.yield %u0, %res: vector<4x4x2xf32>, vector<4x4x2xf32>
++  }
++  %u0 = "some_use"(%loop#0) : (vector<4x4x2xf32>) -> vector<4x4x2xf32>
++  %u1 = "some_use"(%loop#1) : (vector<4x4x2xf32>) -> vector<4x4x2xf32>
++  return
++}
++
++module attributes {transform.with_named_sequence} {
++  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
++    %0 = transform.structured.match ops{["func.func"]} in %arg1
++      : (!transform.any_op) -> !transform.any_op
++    transform.structured.hoist_redundant_vector_shape_casts %0
++      : (!transform.any_op) -> !transform.any_op
++    transform.yield
++  }
++}
+-- 
+2.33.0
+

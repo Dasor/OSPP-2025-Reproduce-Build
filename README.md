@@ -43,6 +43,7 @@ There are many patches that need to be applied they are in the patches dir and s
 | 0010  | [link](https://gitee.com/openeuler/llvm-project/pulls/255)         | [link](https://github.com/llvm/llvm-project/commit/df0d249b6511289f1e8c1389f4fd33d7b4c083fa)              |   |   |
 | 0011  | [link](https://gitee.com/openeuler/llvm-project/pulls/290)         | [link](https://gitee.com/link?target=https%3A%2F%2Fgithub.com%2Fllvm%2Fllvm-project%2Fpull%2F140793)      |   |   |
 | 0012  | [link](https://gitee.com/openeuler/llvm-project/pulls/291)         |                                                                                                           |   |   |
+| 0013  | [link](https://gitee.com/openeuler/llvm-project/pulls/293)         |                                                                                                           |   |   |
 
 to apply all patches in order, simply:
 
@@ -144,7 +145,7 @@ rm -rf ~/.triton/cache && python3 -m pytest -n32 --device=cpu python/test/unit/l
 
 to run all the core tests, again making sure to **remove the triton cache**.
 
-## 5. Failing test.
+## 6. Failing test.
 
 There are 96 failing test in `test_core.py` there is a file named `failed.txt` in this repo that contains the name of all the failing test. To run a specific test for example let's say `test_reduce[1-argmax-float32-shape149-0-True]` we can just do:
 
