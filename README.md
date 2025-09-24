@@ -54,7 +54,7 @@ and then compile:
 
 ```shell
 mkdir build; cd build
-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_ASSERTIONS=ON ../llvm -DLLVM_ENABLE_PROJECTS="mlir;llvm;clang;clang-tools-extra;lld" -DLLVM_TARGETS_TO_BUILD="host;NVPTX;AMDGPU;AArch64" -DMLIR_ENABLE_BINDINGS_PYTHON=ON -DPython3_EXECUTABLE=$(which python3) -DMLIR_INCLUDE_INTEGRATION_TESTS=ON -DLLVM_ENABLE_RTTI=ON -DBUILD_SHARED_LIBS=ON
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_ASSERTIONS=ON ../llvm -DLLVM_ENABLE_PROJECTS="mlir;llvm;clang;clang-tools-extra;lld" -DLLVM_TARGETS_TO_BUILD="host;NVPTX;AMDGPU;AArch64" -DMLIR_ENABLE_BINDINGS_PYTHON=ON -DPython3_EXECUTABLE=$(which python3) -DMLIR_INCLUDE_INTEGRATION_TESTS=ON -DLLVM_ENABLE_RTTI=ON -DBUILD_SHARED_LIBS=OFF
 ninja
 ```
 
@@ -85,7 +85,7 @@ export PYTHONPATH=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
 export PATH=$LLVM_BUILD_DIR/bin:$PATH
 export TRITON_BUILD_WITH_CLANG_LLD=true
 export TRITON_PLUGIN_DIRS=$(pwd)/triton-shared
-pip install -e --no-build-isolation python
+pip install --no-build-isolation -v -e python
 ```
 
 ## 4. Using triton-shared (MLIR Backend)
@@ -106,7 +106,7 @@ export TRITON_SHARED_OPT_PATH=$YOUR_WORKDIR/triton-cpu/python/build/cmake.linux-
 
 The first just activates the triton-shared backend, and the next two point to important files that triton-shared needs to use. Depending on the architecture of the server and the python version the last path will be different.
 
-## 4. Tips for debugging and testing
+## 5. Tips for debugging and testing
 
 When debugging it's a really good idea to set the envrioment variable `TRITON_SHARED_DUMP_PATH` so you get the IR from all the intermediate steps, for example:
 
