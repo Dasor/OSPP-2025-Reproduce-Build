@@ -160,3 +160,37 @@ rm -rf ~/.triton/cache && python3 -m pytest -n32 --device=cpu python/test/unit/l
 ```
 
 We see that just the tests with the `float32` parameters fail pointing us to a better path to fix the solution. 
+
+## 7. Work left on the SVE pipeline.
+
+There is still work left to do on the SVE pipeline as it produces some errors, the code related to it it's on the `sve-pipe` branch so on triton-cpu:
+
+```shell
+git checkout sve-pipe
+```
+
+To test the pipeline I recommend to run either the cpu-matrix multiplication example:
+
+```shell
+rm -rf ~/.triton/cache/ && python python/tutorials/03-matrix-multiplication-cpu.py
+```
+
+or the `test_dot`
+
+```shell
+rm -rf ~/.triton/cache && python3 -m pytest -n0 -x --device=cpu python/test/unit/language/test_core.py::test_dot -m cpu
+```
+
+Some errors come from `pipeline_schedule` you can try and comment it out. The easist way is to just comment this part (line 845 `compiler.py`)
+
+```python
+include5 = transform.IncludeOp(
+  [],
+  FlatSymbolRefAttr.get("main_type1_pipeline"),
+  transform.FailurePropagationMode.Propagate,
+  [sequence.bodyTarget],
+)
+```
+
+
+
